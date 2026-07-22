@@ -157,10 +157,10 @@ def main():
             gains_msg.append((l["modele"], cheval_parie, cote, gagnant, gain))
 
         if gains_msg:
-            msg = f"ð <b>Resultat course {race_id}</b>\n\n"
+            msg = f"🏁 <b>Resultat course {race_id}</b>\n\n"
             for modele, cheval, cote, gagnant, gain in gains_msg:
-                emoji = "â" if gagnant else "â"
-                msg += f"{emoji} [{modele}] {cheval} (cote {cote:.1f}) â gain unitaire {gain:+.2f}\n"
+                emoji = "✅" if gagnant else "❌"
+                msg += f"{emoji} [{modele}] {cheval} (cote {cote:.1f}) — gain unitaire {gain:+.2f}\n"
             envoyer_telegram(msg)
 
         courses_traitees_ce_run.append(race_id)
@@ -180,4 +180,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        import traceback
+        detail = traceback.format_exc()[-500:]
+        envoyer_telegram(f"🔴 <b>Erreur dans verifier_resultats.py</b>\n\n{e}\n\n<code>{detail}</code>")
+        raise
