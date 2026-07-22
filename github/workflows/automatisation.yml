@@ -1,0 +1,30 @@
+name: Suivi PMU automatique
+
+on:
+  schedule:
+    # Toutes les 15 minutes, 24h/24 (les courses de trot ont lieu a
+    # differentes heures selon les hippodromes et la saison - le script
+    # lui-meme filtre les courses hors fenetre, donc pas besoin de
+    # restreindre les horaires ici)
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}  # permet aussi un lancement manuel depuis GitHub
+
+jobs:
+  verifier:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # necessaire pour committer les fichiers mis a jour
+
+    steps:
+      - name: Recuperer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Installer les dependances
+        run: pip install -r requirements.txt
+
+      - name: Verifier les courses a
