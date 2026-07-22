@@ -1,0 +1,6 @@
+{
+  "offset_discipline_monte_moins_attele_ms_km": -400,
+  "min_partants_valides_speed_figure": 6,
+  "plafond_ecart_speed_figure_ms": 8000,
+  "note": "offset calcule sur l'historique au 22 juillet 2026 - a rafraichir en meme temps que les modeles"
+}
