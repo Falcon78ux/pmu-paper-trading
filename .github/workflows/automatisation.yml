@@ -39,6 +39,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add etat_drivers.json etat_hippodromes.json etat_chevaux.json courses_notifiees.json paris_virtuels.csv
+          git add $(ls etat_drivers.json etat_hippodromes.json etat_chevaux.json courses_notifiees.json paris_virtuels.csv 2>/dev/null)
           git diff --quiet --cached || git commit -m "Mise a jour automatique"
           git push
