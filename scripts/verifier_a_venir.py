@@ -85,7 +85,7 @@ def main():
     try:
         courses = recuperer_programme_du_jour(date_str)
     except Exception as e:
-        envoyer_telegram(f"â ï¸ Erreur recuperation programme du jour : {e}")
+        envoyer_telegram(f"⚠️ Erreur recuperation programme du jour : {e}")
         return
 
     log_paris = []
@@ -154,17 +154,17 @@ def main():
                         value_bets_v15.append((cheval, cote, proba15, ev15))
 
         if value_bets_v14 or value_bets_v15:
-            msg = f"ð <b>Course {course['hippodrome']} R{course['num_reunion']}C{course['num_course']}</b>\n"
+            msg = f"🐎 <b>Course {course['hippodrome']} R{course['num_reunion']}C{course['num_course']}</b>\n"
             msg += f"Depart dans ~{int(minutes_avant_depart)} min\n\n"
             if value_bets_v14:
                 msg += "<b>Modele v1.4 :</b>\n"
                 for cheval, cote, proba, ev in value_bets_v14:
-                    msg += f"â¢ {cheval} â cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}\n"
+                    msg += f"• {cheval} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}\n"
                     log_paris.append({"race_id": race_id, "modele": "v1.4", "cheval": cheval, "cote": cote, "ev": ev, "date_detection": maintenant.isoformat()})
             if value_bets_v15:
                 msg += "\n<b>Modele v1.5 :</b>\n"
                 for cheval, cote, proba, ev in value_bets_v15:
-                    msg += f"â¢ {cheval} â cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}\n"
+                    msg += f"• {cheval} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}\n"
                     log_paris.append({"race_id": race_id, "modele": "v1.5", "cheval": cheval, "cote": cote, "ev": ev, "date_detection": maintenant.isoformat()})
 
             envoyer_telegram(msg)
@@ -193,4 +193,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        import traceback
+        detail = traceback.format_exc()[-500:]  # les 500 derniers caracteres, assez pour situer l'erreur
+        envoyer_telegram(f"🔴 <b>Erreur dans verifier_a_venir.py</b>\n\n{e}\n\n<code>{detail}</code>")
+        raise
