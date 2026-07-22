@@ -35,10 +35,15 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python scripts/verifier_resultats.py
 
+      - name: Keep-alive quotidien
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python scripts/keep_alive.py
+
       - name: Sauvegarder les fichiers mis a jour
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add $(ls etat_drivers.json etat_hippodromes.json etat_chevaux.json courses_notifiees.json paris_virtuels.csv 2>/dev/null)
-          git diff --quiet --cached || git commit -m "Mise a jour automatique"
-          git push
+          git add $(ls etat_drivers.json etat_hippodromes.json etat_chevaux.json courses_notifiees.json paris_virtuels.csv dernier_run.json dernier_heartbeat.json 2>/dev/null)
+          git diff --quiet --cached || git commit -m "Mise a jour automatique $(date -u +'%Y-%m-%
