@@ -142,7 +142,10 @@ def main():
             maj_hippodrome(etat_hippodromes, hippodrome_nom, somme_ecart_course, nb_partants_course)
 
         # --- 2. Mise a jour de paris_virtuels.csv + calcul du gain en euros ---
-        gains_msg = []
+        # La bankroll est capturee JUSTE APRES chaque pari individuel, dans
+        # l'ordre, pour que le message Telegram montre la vraie progression
+        # pari par pari plutot que le seul etat final de la course.
+        lignes_message = []
         for l in lignes:
             if l["race_id"] != race_id or l.get("resultat", "") != "":
                 continue
@@ -161,20 +164,21 @@ def main():
 
             if l["modele"] == "v1.4":
                 bankroll_v14 += gain_euros
+                bankroll_apres = bankroll_v14
             elif l["modele"] == "v1.5":
                 bankroll_v15 += gain_euros
+                bankroll_apres = bankroll_v15
+            else:
+                bankroll_apres = None
 
-            gains_msg.append((l["modele"], cheval_parie, cote, mise, gagnant, gain_euros))
+            emoji = "✅" if gagnant else "❌"
+            lignes_message.append(
+                f"{emoji} [{l['modele']}] {cheval_parie} (cote {cote:.1f}, mise {mise:.2f}€) "
+                f"— gain {gain_euros:+.2f}€ | bankroll {l['modele']} : {bankroll_apres:.2f}€"
+            )
 
-        if gains_msg:
-            msg = f"🏁 <b>Resultat course {race_id}</b>\n\n"
-            for modele, cheval, cote, mise, gagnant, gain_euros in gains_msg:
-                emoji = "✅" if gagnant else "❌"
-                bankroll_actuelle = bankroll_v14 if modele == "v1.4" else bankroll_v15
-                msg += (
-                    f"{emoji} [{modele}] {cheval} (cote {cote:.1f}, mise {mise:.2f}€) "
-                    f"— gain {gain_euros:+.2f}€ | bankroll {modele} : {bankroll_actuelle:.2f}€\n"
-                )
+        if lignes_message:
+            msg = f"🏁 <b>Resultat course {race_id}</b>\n\n" + "\n".join(lignes_message)
             envoyer_telegram(msg)
 
         courses_traitees_ce_run.append(race_id)
