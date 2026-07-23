@@ -59,22 +59,6 @@ def envoyer_telegram(message):
     except Exception as e:
         print(f"Exception envoi Telegram : {e}")
 
-    """Envoie un message via le bot Telegram. Token/chat_id lus depuis les
-    variables d'environnement (injectees par GitHub Actions depuis les Secrets)."""
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-    if not token or not chat_id:
-        print("ATTENTION : TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID manquant, message non envoye.")
-        print(message)
-        return
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    try:
-        r = requests.post(url, data={"chat_id": chat_id, "text": message, "parse_mode": "HTML"}, timeout=15)
-        if r.status_code != 200:
-            print(f"Erreur envoi Telegram ({r.status_code}) : {r.text}")
-    except Exception as e:
-        print(f"Exception envoi Telegram : {e}")
-
 
 # -----------------------------------------------------------------------
 # SCORING DU MODELE (regression logistique - coefficients pre-calcules)
@@ -174,3 +158,34 @@ def extraire_cote_directe(participant):
     if rapport and rapport.get("typePari") == "SIMPLE_GAGNANT":
         return rapport.get("rapport")
     return None
+
+
+# -----------------------------------------------------------------------
+# BANKROLL VIRTUELLE ET MISE KELLY (une bankroll independante par modele)
+# -----------------------------------------------------------------------
+
+FRACTION_KELLY = 0.10   # voir grille de test du 23 juillet 2026
+PLAFOND_MISE = 20       # en euros
+BANKROLL_DEPART = 1236  # en euros
+
+
+def get_bankroll(racine, nom_modele):
+    """nom_modele : 'v14' ou 'v15'. Cree le fichier au depart si absent."""
+    chemin = f"{racine}/bankroll_{nom_modele}.json"
+    data = charger_json(chemin, {"bankroll": BANKROLL_DEPART})
+    return data["bankroll"], chemin
+
+
+def calculer_mise(proba, cote, bankroll):
+    """Formule de Kelly fractionne (1/10), plafonnee a 20EUR."""
+    b = cote - 1
+    if b <= 0:
+        return 0.0
+    kelly_full = max(0.0, (proba * b - (1 - proba)) / b)
+    kelly_fraction = kelly_full * FRACTION_KELLY
+    mise = min(kelly_fraction * bankroll, PLAFOND_MISE)
+    return round(mise, 2)
+
+
+def mettre_a_jour_bankroll(chemin, nouvelle_bankroll):
+    sauvegarder_json(chemin, {"bankroll": round(nouvelle_bankroll, 2)})
