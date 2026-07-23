@@ -5,13 +5,9 @@ VERIFIER_A_VENIR.PY - Detecte les value bets avant chaque course
 A lancer regulierement (toutes les 10-15 min) via GitHub Actions. Pour
 chaque course de trot (attele/monte) qui demarre dans la fenetre de
 verification (par defaut entre 15 et 40 minutes), calcule l'EV de chaque
-partant avec les modeles v1.4 et v1.5, et notifie par Telegram les value
-bets detectes (EV > SEUIL_EV).
-
-NOTE IMPORTANTE : la structure exacte de l'endpoint "programme du jour"
-(sans R/C specifique) n'a pas ete verifiee en conditions reelles - a
-tester et ajuster les noms de champs si necessaire des le premier
-lancement (voir la fonction recuperer_programme_du_jour).
+partant avec les modeles v1.4 et v1.5, calcule la mise Kelly correspondante
+(bankroll virtuelle independante par modele), et notifie par Telegram les
+value bets detectes (EV > SEUIL_EV) avec le montant en euros.
 =============================================================================
 """
 
@@ -27,19 +23,17 @@ sys.path.insert(0, os.path.dirname(__file__))
 from commun import (
     charger_json, sauvegarder_json, envoyer_telegram, calculer_proba,
     get_driver_forme, get_biais_hippodrome, get_speed_figure_avant_course,
-    extraire_cote_directe,
+    extraire_cote_directe, get_bankroll, calculer_mise,
 )
 
 RACINE = os.path.join(os.path.dirname(__file__), "..")
 
 SEUIL_EV = 0.10
-FENETRE_MIN_MINUTES = 15   # ne pas notifier plus tard que 15 min avant le depart
-FENETRE_MAX_MINUTES = 40   # commencer a verifier a partir de 40 min avant le depart
+FENETRE_MIN_MINUTES = 15
+FENETRE_MAX_MINUTES = 40
 
 
 def recuperer_programme_du_jour(date_str):
-    """date_str au format JJMMAAAA. Retourne la liste des courses de trot
-    du jour avec discipline, heure de depart, hippodrome."""
     url = f"https://online.turfinfo.api.pmu.fr/rest/client/61/programme/{date_str}"
     r = requests.get(url, timeout=20)
     r.raise_for_status()
@@ -81,6 +75,9 @@ def main():
     modele_v14 = charger_json(f"{RACINE}/modele_v14.json")
     modele_v15 = charger_json(f"{RACINE}/modele_v15.json")
     courses_notifiees = charger_json(f"{RACINE}/courses_notifiees.json", {})
+
+    bankroll_v14, chemin_bankroll_v14 = get_bankroll(RACINE, "v14")
+    bankroll_v15, chemin_bankroll_v15 = get_bankroll(RACINE, "v15")
 
     try:
         courses = recuperer_programme_du_jour(date_str)
@@ -138,7 +135,8 @@ def main():
                 if proba14 is not None:
                     ev14 = proba14 * cote - 1
                     if ev14 > SEUIL_EV:
-                        value_bets_v14.append((cheval, cote, proba14, ev14))
+                        mise14 = calculer_mise(proba14, cote, bankroll_v14)
+                        value_bets_v14.append((cheval, cote, proba14, ev14, mise14))
 
             if sf_avant is not None and driver_forme is not None and biais_hippo is not None:
                 proba15 = calculer_proba(
@@ -151,21 +149,30 @@ def main():
                 if proba15 is not None:
                     ev15 = proba15 * cote - 1
                     if ev15 > SEUIL_EV:
-                        value_bets_v15.append((cheval, cote, proba15, ev15))
+                        mise15 = calculer_mise(proba15, cote, bankroll_v15)
+                        value_bets_v15.append((cheval, cote, proba15, ev15, mise15))
 
         if value_bets_v14 or value_bets_v15:
             msg = f"🐎 <b>Course {course['hippodrome']} R{course['num_reunion']}C{course['num_course']}</b>\n"
             msg += f"Depart dans ~{int(minutes_avant_depart)} min\n\n"
             if value_bets_v14:
-                msg += "<b>Modele v1.4 :</b>\n"
-                for cheval, cote, proba, ev in value_bets_v14:
-                    msg += f"• {cheval} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}\n"
-                    log_paris.append({"race_id": race_id, "modele": "v1.4", "cheval": cheval, "cote": cote, "ev": ev, "date_detection": maintenant.isoformat()})
+                msg += f"<b>Modele v1.4</b> (bankroll : {bankroll_v14:.0f}€) :\n"
+                for cheval, cote, proba, ev, mise in value_bets_v14:
+                    msg += f"• {cheval} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>\n"
+                    log_paris.append({
+                        "race_id": race_id, "modele": "v1.4", "cheval": cheval,
+                        "cote": cote, "ev": ev, "mise": mise,
+                        "date_detection": maintenant.isoformat(),
+                    })
             if value_bets_v15:
-                msg += "\n<b>Modele v1.5 :</b>\n"
-                for cheval, cote, proba, ev in value_bets_v15:
-                    msg += f"• {cheval} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}\n"
-                    log_paris.append({"race_id": race_id, "modele": "v1.5", "cheval": cheval, "cote": cote, "ev": ev, "date_detection": maintenant.isoformat()})
+                msg += f"\n<b>Modele v1.5</b> (bankroll : {bankroll_v15:.0f}€) :\n"
+                for cheval, cote, proba, ev, mise in value_bets_v15:
+                    msg += f"• {cheval} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>\n"
+                    log_paris.append({
+                        "race_id": race_id, "modele": "v1.5", "cheval": cheval,
+                        "cote": cote, "ev": ev, "mise": mise,
+                        "date_detection": maintenant.isoformat(),
+                    })
 
             envoyer_telegram(msg)
 
@@ -181,12 +188,15 @@ def main():
         existe = os.path.exists(chemin_log)
         import csv
         with open(chemin_log, "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=["race_id", "modele", "cheval", "cote", "ev", "date_detection", "resultat", "gain"])
+            writer = csv.DictWriter(f, fieldnames=[
+                "race_id", "modele", "cheval", "cote", "ev", "mise",
+                "date_detection", "resultat", "gain_euros",
+            ])
             if not existe:
                 writer.writeheader()
             for ligne in log_paris:
                 ligne["resultat"] = ""
-                ligne["gain"] = ""
+                ligne["gain_euros"] = ""
                 writer.writerow(ligne)
 
     print(f"Verification terminee. {len(log_paris)} value bets detectes.")
@@ -197,6 +207,6 @@ if __name__ == "__main__":
         main()
     except Exception as e:
         import traceback
-        detail = traceback.format_exc()[-500:]  # les 500 derniers caracteres, assez pour situer l'erreur
+        detail = traceback.format_exc()[-500:]
         envoyer_telegram(f"🔴 <b>Erreur dans verifier_a_venir.py</b>\n\n{e}\n\n<code>{detail}</code>")
         raise
