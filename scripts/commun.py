@@ -35,6 +35,34 @@ def envoyer_telegram(message):
     variables d'environnement (injectees par GitHub Actions depuis les Secrets)."""
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+
+    # --- DIAGNOSTIC TEMPORAIRE (a retirer une fois le probleme resolu) ---
+    if token:
+        print(f"DIAGNOSTIC : longueur du token = {len(token)} caracteres, debut = '{token[:4]}', fin = '{token[-4:]}'")
+    else:
+        print("DIAGNOSTIC : token vide ou absent !")
+    if chat_id:
+        print(f"DIAGNOSTIC : longueur du chat_id = {len(chat_id)} caracteres, valeur = '{chat_id}'")
+    else:
+        print("DIAGNOSTIC : chat_id vide ou absent !")
+    # --- FIN DIAGNOSTIC ---
+
+    if not token or not chat_id:
+        print("ATTENTION : TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID manquant, message non envoye.")
+        print(message)
+        return
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    try:
+        r = requests.post(url, data={"chat_id": chat_id, "text": message, "parse_mode": "HTML"}, timeout=15)
+        if r.status_code != 200:
+            print(f"Erreur envoi Telegram ({r.status_code}) : {r.text}")
+    except Exception as e:
+        print(f"Exception envoi Telegram : {e}")
+
+    """Envoie un message via le bot Telegram. Token/chat_id lus depuis les
+    variables d'environnement (injectees par GitHub Actions depuis les Secrets)."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
         print("ATTENTION : TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID manquant, message non envoye.")
         print(message)
