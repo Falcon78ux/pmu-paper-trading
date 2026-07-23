@@ -166,6 +166,7 @@ def extraire_cote_directe(participant):
 
 FRACTION_KELLY = 0.10   # voir grille de test du 23 juillet 2026
 PLAFOND_MISE = 20       # en euros
+MISE_MINIMUM = 1.50     # mise minimum reelle au PMU (Simple Gagnant) - en dessous, on ignore le pari
 BANKROLL_DEPART = 1236  # en euros
 
 
@@ -177,13 +178,19 @@ def get_bankroll(racine, nom_modele):
 
 
 def calculer_mise(proba, cote, bankroll):
-    """Formule de Kelly fractionne (1/10), plafonnee a 20EUR."""
+    """Formule de Kelly fractionne (1/10), plafonnee a 20EUR.
+    Si la mise calculee est sous la mise minimum reelle du PMU (1.50EUR),
+    retourne 0 - le pari est alors ignore, plutot que d'arrondir a la
+    hausse (ce qui fausserait la taille de mise voulue par Kelly) ou de
+    gonfler artificiellement la bankroll de depart pour l'eviter."""
     b = cote - 1
     if b <= 0:
         return 0.0
     kelly_full = max(0.0, (proba * b - (1 - proba)) / b)
     kelly_fraction = kelly_full * FRACTION_KELLY
     mise = min(kelly_fraction * bankroll, PLAFOND_MISE)
+    if mise < MISE_MINIMUM:
+        return 0.0
     return round(mise, 2)
 
 
