@@ -136,7 +136,8 @@ def main():
                     ev14 = proba14 * cote - 1
                     if ev14 > SEUIL_EV:
                         mise14 = calculer_mise(proba14, cote, bankroll_v14)
-                        value_bets_v14.append((cheval, cote, proba14, ev14, mise14))
+                        if mise14 > 0:
+                            value_bets_v14.append((cheval, cote, proba14, ev14, mise14))
 
             if sf_avant is not None and driver_forme is not None and biais_hippo is not None:
                 proba15 = calculer_proba(
@@ -150,7 +151,8 @@ def main():
                     ev15 = proba15 * cote - 1
                     if ev15 > SEUIL_EV:
                         mise15 = calculer_mise(proba15, cote, bankroll_v15)
-                        value_bets_v15.append((cheval, cote, proba15, ev15, mise15))
+                        if mise15 > 0:
+                            value_bets_v15.append((cheval, cote, proba15, ev15, mise15))
 
         if value_bets_v14 or value_bets_v15:
             msg = f"🐎 <b>Course {course['hippodrome']} R{course['num_reunion']}C{course['num_course']}</b>\n"
