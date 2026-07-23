@@ -6,12 +6,13 @@ A lancer regulierement (toutes les 15-30 min) via GitHub Actions, apres
 verifier_a_venir.py. Pour chaque course deja notifiee dont le resultat est
 maintenant disponible :
 1. Met a jour paris_virtuels.csv avec le resultat (gagnant/perdant) et le
-   gain/perte de chaque pari virtuel logue
-2. Met a jour l'etat glissant (driver_forme, biais_hippodrome,
-   speed_figure) pour TOUS les partants de la course (pas seulement ceux
-   sur lesquels on a "parie") - pour que le systeme continue d'apprendre
-   correctement, comme le faisait le backtest original
-3. Envoie un message Telegram recapitulatif de la course
+   gain/perte REEL EN EUROS de chaque pari virtuel logue (mise deja
+   calculee lors de la detection)
+2. Met a jour la bankroll virtuelle (une par modele, v1.4/v1.5)
+3. Met a jour l'etat glissant (driver_forme, biais_hippodrome,
+   speed_figure) pour TOUS les partants de la course
+4. Envoie un message Telegram recapitulatif de la course, avec les
+   montants et la bankroll a jour
 =============================================================================
 """
 
@@ -26,6 +27,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from commun import (
     charger_json, sauvegarder_json, envoyer_telegram,
     maj_driver, maj_hippodrome, maj_cheval,
+    get_bankroll, mettre_a_jour_bankroll,
 )
 
 RACINE = os.path.join(os.path.dirname(__file__), "..")
@@ -47,7 +49,6 @@ def recuperer_participants(date_str, num_reunion, num_course):
 
 
 def resultat_disponible(participants):
-    """Considere le resultat comme disponible si au moins un participant a un rang d'arrivee renseigne."""
     return any(p.get("ordreArrivee") is not None for p in participants)
 
 
@@ -60,6 +61,9 @@ def main():
     offset_discipline = constantes.get("offset_discipline_monte_moins_attele_ms_km", -400)
     min_partants_sf = constantes.get("min_partants_valides_speed_figure", 6)
     plafond_ecart = constantes.get("plafond_ecart_speed_figure_ms", 8000)
+
+    bankroll_v14, chemin_bankroll_v14 = get_bankroll(RACINE, "v14")
+    bankroll_v15, chemin_bankroll_v15 = get_bankroll(RACINE, "v15")
 
     chemin_log = f"{RACINE}/paris_virtuels.csv"
     if not os.path.exists(chemin_log):
@@ -86,7 +90,7 @@ def main():
             continue
 
         if not resultat_disponible(participants):
-            continue  # pas encore couru ou resultat pas encore publie
+            continue
 
         infos_course = courses_notifiees.get(race_id, {})
         hippodrome_nom = infos_course.get("hippodrome") if isinstance(infos_course, dict) else None
@@ -96,7 +100,6 @@ def main():
         for p in participants:
             incident = p.get("incident", "") or ""
             rk = p.get("reductionKilometrique")
-            allure = p.get("allure")
             if incident in INCIDENTS_A_EXCLURE or rk is None:
                 continue
             valides.append(p)
@@ -108,14 +111,13 @@ def main():
                 if p.get("allure") == "MONTE" or (p.get("discipline") == "MONTE"):
                     rk = rk - offset_discipline
                 rks_ajustees.append(rk)
-            track_variant = sorted(rks_ajustees)[len(rks_ajustees) // 2]  # mediane approx
+            track_variant = sorted(rks_ajustees)[len(rks_ajustees) // 2]
 
             for p, rk_adj in zip(valides, rks_ajustees):
                 sf_brut = track_variant - rk_adj
                 sf_brut = max(-plafond_ecart, min(plafond_ecart, sf_brut))
                 maj_cheval(etat_chevaux, p.get("nom"), sf_brut)
 
-        # --- Mise a jour driver_forme et biais_hippodrome pour TOUS les partants avec cote connue ---
         somme_ecart_course = 0.0
         nb_partants_course = 0
         for p in participants:
@@ -139,7 +141,7 @@ def main():
         if nb_partants_course > 0 and hippodrome_nom:
             maj_hippodrome(etat_hippodromes, hippodrome_nom, somme_ecart_course, nb_partants_course)
 
-        # --- 2. Mise a jour de paris_virtuels.csv avec le resultat de chaque pari logue ---
+        # --- 2. Mise a jour de paris_virtuels.csv + calcul du gain en euros ---
         gains_msg = []
         for l in lignes:
             if l["race_id"] != race_id or l.get("resultat", "") != "":
@@ -151,32 +153,51 @@ def main():
             rang = participant_correspondant.get("ordreArrivee")
             gagnant = rang == 1
             cote = float(l["cote"])
-            gain = (cote - 1) if gagnant else -1  # en unites de mise (1 unite = mise virtuelle)
+            mise = float(l.get("mise", 0) or 0)
+
+            gain_euros = mise * (cote - 1) if gagnant else -mise
             l["resultat"] = "GAGNANT" if gagnant else "PERDANT"
-            l["gain"] = f"{gain:.2f}"
-            gains_msg.append((l["modele"], cheval_parie, cote, gagnant, gain))
+            l["gain_euros"] = f"{gain_euros:.2f}"
+
+            if l["modele"] == "v1.4":
+                bankroll_v14 += gain_euros
+            elif l["modele"] == "v1.5":
+                bankroll_v15 += gain_euros
+
+            gains_msg.append((l["modele"], cheval_parie, cote, mise, gagnant, gain_euros))
 
         if gains_msg:
             msg = f"🏁 <b>Resultat course {race_id}</b>\n\n"
-            for modele, cheval, cote, gagnant, gain in gains_msg:
+            for modele, cheval, cote, mise, gagnant, gain_euros in gains_msg:
                 emoji = "✅" if gagnant else "❌"
-                msg += f"{emoji} [{modele}] {cheval} (cote {cote:.1f}) — gain unitaire {gain:+.2f}\n"
+                bankroll_actuelle = bankroll_v14 if modele == "v1.4" else bankroll_v15
+                msg += (
+                    f"{emoji} [{modele}] {cheval} (cote {cote:.1f}, mise {mise:.2f}€) "
+                    f"— gain {gain_euros:+.2f}€ | bankroll {modele} : {bankroll_actuelle:.2f}€\n"
+                )
             envoyer_telegram(msg)
 
         courses_traitees_ce_run.append(race_id)
 
-    # --- Sauvegarde de tous les etats mis a jour ---
+    # --- Sauvegarde ---
     with open(chemin_log, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["race_id", "modele", "cheval", "cote", "ev", "date_detection", "resultat", "gain"])
+        writer = csv.DictWriter(f, fieldnames=[
+            "race_id", "modele", "cheval", "cote", "ev", "mise",
+            "date_detection", "resultat", "gain_euros",
+        ])
         writer.writeheader()
         for l in lignes:
             writer.writerow(l)
+
+    mettre_a_jour_bankroll(chemin_bankroll_v14, bankroll_v14)
+    mettre_a_jour_bankroll(chemin_bankroll_v15, bankroll_v15)
 
     sauvegarder_json(f"{RACINE}/etat_drivers.json", etat_drivers)
     sauvegarder_json(f"{RACINE}/etat_hippodromes.json", etat_hippodromes)
     sauvegarder_json(f"{RACINE}/etat_chevaux.json", etat_chevaux)
 
     print(f"{len(courses_traitees_ce_run)} courses traitees dans ce run.")
+    print(f"Bankroll v1.4 : {bankroll_v14:.2f}EUR | Bankroll v1.5 : {bankroll_v15:.2f}EUR")
 
 
 if __name__ == "__main__":
