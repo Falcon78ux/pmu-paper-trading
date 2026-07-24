@@ -1,15 +1,115 @@
-📊 Bilan quotidien — 25/07/2026 08:00 UTC
+"""
+=============================================================================
+KEEP_ALIVE.PY - Battement de coeur quotidien AVEC statistiques de performance
+=============================================================================
+Deux roles :
+1. Envoie un message Telegram UNE FOIS PAR JOUR avec un vrai bilan de
+   performance (ROI, taux de victoire, gains par modele) - pas juste une
+   confirmation que le systeme tourne.
+2. Met a jour dernier_run.json a CHAQUE execution (anti-desactivation
+   GitHub apres 60 jours d'inactivite).
+=============================================================================
+"""
 
-Paris logues : 93 (93 traites, 0 en attente)
+import sys
+import os
+import csv
+from datetime import datetime, timezone
 
-v1.4
-Bankroll : 1246.51€ (+10.51€)
-49 paris traites, 18.4% de victoires
-Mise totale : 261.89€, gain net : +10.50€ (ROI +4.0%)
+sys.path.insert(0, os.path.dirname(__file__))
+from commun import charger_json, sauvegarder_json, envoyer_telegram
 
-v1.5
-Bankroll : 1208.78€ (-27.22€)
-44 paris traites, 13.6% de victoires
-Mise totale : 236.71€, gain net : -27.22€ (ROI -11.5%)
+RACINE = os.path.join(os.path.dirname(__file__), "..")
 
-Drivers suivis : 5885 | Hippodromes suivis : 88
+HEURE_HEARTBEAT = 8  # heure UTC a laquelle envoyer le message quotidien
+
+
+def calculer_stats_modele(lignes, nom_modele):
+    """Calcule ROI, taux de victoire, gains pour un modele donne, a partir
+    des lignes deja traitees (resultat non vide) de paris_virtuels.csv."""
+    sous_ensemble = [l for l in lignes if l.get("modele") == nom_modele and l.get("resultat", "") != ""]
+    if not sous_ensemble:
+        return None
+
+    nb_paris = len(sous_ensemble)
+    nb_gagnants = sum(1 for l in sous_ensemble if l.get("resultat") == "GAGNANT")
+    taux_victoire = nb_gagnants / nb_paris if nb_paris > 0 else 0
+
+    mise_totale = sum(float(l.get("mise", 0) or 0) for l in sous_ensemble)
+    gain_total = sum(float(l.get("gain_euros", 0) or 0) for l in sous_ensemble)
+    roi = gain_total / mise_totale if mise_totale > 0 else 0
+
+    return {
+        "nb_paris": nb_paris,
+        "taux_victoire": taux_victoire,
+        "mise_totale": mise_totale,
+        "gain_total": gain_total,
+        "roi": roi,
+    }
+
+
+def main():
+    maintenant = datetime.now(timezone.utc)
+    aujourd_hui = maintenant.strftime("%Y-%m-%d")
+
+    # --- 1. Preuve de vie, a chaque execution ---
+    dernier_run = {"derniere_execution_utc": maintenant.isoformat()}
+    sauvegarder_json(f"{RACINE}/dernier_run.json", dernier_run)
+
+    # --- 2. Heartbeat Telegram avec statistiques, une fois par jour ---
+    etat_heartbeat = charger_json(f"{RACINE}/dernier_heartbeat.json", {})
+    dernier_jour_envoye = etat_heartbeat.get("dernier_jour")
+
+    if dernier_jour_envoye != aujourd_hui and maintenant.hour >= HEURE_HEARTBEAT:
+        chemin_log = f"{RACINE}/paris_virtuels.csv"
+        lignes = []
+        if os.path.exists(chemin_log):
+            with open(chemin_log, "r", encoding="utf-8") as f:
+                lignes = list(csv.DictReader(f))
+
+        nb_paris_total = len(lignes)
+        nb_traites = sum(1 for l in lignes if l.get("resultat", "") != "")
+        nb_en_attente = nb_paris_total - nb_traites
+
+        bankroll_v14 = charger_json(f"{RACINE}/bankroll_v14.json", {}).get("bankroll")
+        bankroll_v15 = charger_json(f"{RACINE}/bankroll_v15.json", {}).get("bankroll")
+
+        stats_v14 = calculer_stats_modele(lignes, "v1.4")
+        stats_v15 = calculer_stats_modele(lignes, "v1.5")
+
+        etat_drivers = charger_json(f"{RACINE}/etat_drivers.json", {})
+        etat_hippodromes = charger_json(f"{RACINE}/etat_hippodromes.json", {})
+
+        msg = f"\U0001F4CA <b>Bilan quotidien</b> \u2014 {maintenant.strftime('%d/%m/%Y %H:%M')} UTC\n\n"
+        msg += f"Paris logues : {nb_paris_total} ({nb_traites} traites, {nb_en_attente} en attente)\n\n"
+
+        for nom, stats, bankroll in [("v1.4", stats_v14, bankroll_v14), ("v1.5", stats_v15, bankroll_v15)]:
+            msg += f"<b>{nom}</b>\n"
+            if bankroll is not None:
+                variation = bankroll - 1236
+                msg += f"Bankroll : {bankroll:.2f}€ ({variation:+.2f}€)\n"
+            if stats:
+                msg += (
+                    f"{stats['nb_paris']} paris traites, "
+                    f"{stats['taux_victoire']:.1%} de victoires\n"
+                    f"Mise totale : {stats['mise_totale']:.2f}€, "
+                    f"gain net : {stats['gain_total']:+.2f}€ "
+                    f"(ROI {stats['roi']:+.1%})\n"
+                )
+            else:
+                msg += "Aucun pari traite pour l'instant.\n"
+            msg += "\n"
+
+        msg += f"Drivers suivis : {len(etat_drivers)} | Hippodromes suivis : {len(etat_hippodromes)}"
+
+        envoyer_telegram(msg)
+
+        etat_heartbeat["dernier_jour"] = aujourd_hui
+        sauvegarder_json(f"{RACINE}/dernier_heartbeat.json", etat_heartbeat)
+        print("Heartbeat quotidien avec statistiques envoye.")
+    else:
+        print("Pas encore l'heure du heartbeat quotidien, ou deja envoye aujourd'hui.")
+
+
+if __name__ == "__main__":
+    main()
