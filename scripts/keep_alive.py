@@ -73,9 +73,11 @@ def main():
 
         bankroll_v14 = charger_json(f"{RACINE}/bankroll_v14.json", {}).get("bankroll")
         bankroll_v15 = charger_json(f"{RACINE}/bankroll_v15.json", {}).get("bankroll")
+        bankroll_v18 = charger_json(f"{RACINE}/bankroll_v18.json", {}).get("bankroll")
 
         stats_v14 = calculer_stats_modele(lignes, "v1.4")
         stats_v15 = calculer_stats_modele(lignes, "v1.5")
+        stats_v18 = calculer_stats_modele(lignes, "v1.8")
 
         etat_drivers = charger_json(f"{RACINE}/etat_drivers.json", {})
         etat_hippodromes = charger_json(f"{RACINE}/etat_hippodromes.json", {})
@@ -83,7 +85,7 @@ def main():
         msg = f"\U0001F4CA <b>Bilan quotidien</b> \u2014 {maintenant.strftime('%d/%m/%Y %H:%M')} UTC\n\n"
         msg += f"Paris logues : {nb_paris_total} ({nb_traites} traites, {nb_en_attente} en attente)\n\n"
 
-        for nom, stats, bankroll in [("v1.4", stats_v14, bankroll_v14), ("v1.5", stats_v15, bankroll_v15)]:
+        for nom, stats, bankroll in [("v1.4", stats_v14, bankroll_v14), ("v1.5", stats_v15, bankroll_v15), ("v1.8", stats_v18, bankroll_v18)]:
             msg += f"<b>{nom}</b>\n"
             if bankroll is not None:
                 variation = bankroll - 1236
