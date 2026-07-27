@@ -36,17 +36,6 @@ def envoyer_telegram(message):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
 
-    # --- DIAGNOSTIC TEMPORAIRE (a retirer une fois le probleme resolu) ---
-    if token:
-        print(f"DIAGNOSTIC : longueur du token = {len(token)} caracteres, debut = '{token[:4]}', fin = '{token[-4:]}'")
-    else:
-        print("DIAGNOSTIC : token vide ou absent !")
-    if chat_id:
-        print(f"DIAGNOSTIC : longueur du chat_id = {len(chat_id)} caracteres, valeur = '{chat_id}'")
-    else:
-        print("DIAGNOSTIC : chat_id vide ou absent !")
-    # --- FIN DIAGNOSTIC ---
-
     if not token or not chat_id:
         print("ATTENTION : TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID manquant, message non envoye.")
         print(message)
@@ -61,7 +50,7 @@ def envoyer_telegram(message):
 
 
 # -----------------------------------------------------------------------
-# SCORING DU MODELE (regression logistique - coefficients pre-calcules)
+# SCORING DU MODELE v1.4/v1.5 (regression logistique - INCHANGE)
 # -----------------------------------------------------------------------
 
 def sigmoid(x):
@@ -93,7 +82,56 @@ def calculer_proba(valeurs_brutes, modele):
 
 
 # -----------------------------------------------------------------------
-# GESTION DE L'ETAT GLISSANT (driver / hippodrome / cheval)
+# SCORING DU MODELE v1.8 (avec interaction, nb_partants, corde, deferrage)
+# -----------------------------------------------------------------------
+# Fonction DEDIEE plutot que d'etendre calculer_proba(), pour ne prendre
+# aucun risque sur v1.4/v1.5 qui tournent deja en production sans souci.
+
+def calculer_proba_v18(valeurs_brutes, modele_v18):
+    """
+    valeurs_brutes attendu : {
+        "speed_figure_avant_course": ..., "log_cote": ..., "driver_forme": ...,
+        "biais_hippodrome": ..., "nb_partants_course": ..., "ecart_corde": ...,
+        "deferre_4_pieds": 0 ou 1,
+    }
+    modele_v18 : dict charge depuis modele_v18_production.json
+    """
+    coefs = modele_v18["coefficients"]
+    norm = modele_v18["standardisation"]
+
+    requis = ["speed_figure_avant_course", "driver_forme", "biais_hippodrome",
+              "nb_partants_course", "ecart_corde", "log_cote", "deferre_4_pieds"]
+    for var in requis:
+        if var not in valeurs_brutes or valeurs_brutes[var] is None:
+            return None
+
+    def std(var):
+        m = norm[var]["moyenne"]
+        s = norm[var]["ecart_type"]
+        return (valeurs_brutes[var] - m) / s
+
+    sf_std = std("speed_figure_avant_course")
+    driver_std = std("driver_forme")
+    hippo_std = std("biais_hippodrome")
+    nb_partants_std = std("nb_partants_course")
+    ecart_corde_std = std("ecart_corde")
+    interaction = sf_std * driver_std
+
+    z = coefs.get("const", 0.0)
+    z += coefs.get("sf_std", 0.0) * sf_std
+    z += coefs.get("log_cote", 0.0) * valeurs_brutes["log_cote"]
+    z += coefs.get("driver_std", 0.0) * driver_std
+    z += coefs.get("hippo_std", 0.0) * hippo_std
+    z += coefs.get("interaction_sf_driver", 0.0) * interaction
+    z += coefs.get("nb_partants_std", 0.0) * nb_partants_std
+    z += coefs.get("ecart_corde_std", 0.0) * ecart_corde_std
+    z += coefs.get("deferre_4_pieds", 0.0) * valeurs_brutes["deferre_4_pieds"]
+
+    return sigmoid(z)
+
+
+# -----------------------------------------------------------------------
+# GESTION DE L'ETAT GLISSANT (driver / hippodrome / cheval) - INCHANGE
 # -----------------------------------------------------------------------
 
 FENETRE_DRIVER = 100
@@ -150,6 +188,41 @@ def maj_cheval(etat_chevaux, cheval, speed_figure_brut):
 
 
 # -----------------------------------------------------------------------
+# ETAT GLISSANT SPECIFIQUE A L'APTITUDE CORDE (nouveau, pour v1.8)
+# -----------------------------------------------------------------------
+# etat_chevaux_corde structure : {cheval: {"CORDE_GAUCHE": [sf...], "CORDE_DROITE": [sf...]}}
+# Fenetre 5, min 2 observations - identique a la methodologie validee.
+
+FENETRE_CORDE = 5
+MIN_CORDE = 2
+
+
+def get_ecart_corde(etat_chevaux_corde, etat_chevaux, cheval, corde_du_jour):
+    """Renvoie l'ecart entre la performance du cheval specifiquement dans
+    CE sens de rotation et sa moyenne generale. 0 si pas assez d'historique
+    specifique a ce sens (valeur neutre, comme a l'entrainement)."""
+    donnees = etat_chevaux_corde.get(cheval, {})
+    historique_corde = donnees.get(corde_du_jour, [])
+    if len(historique_corde) < MIN_CORDE:
+        return 0.0
+    sf_corde_specifique = sum(historique_corde) / len(historique_corde)
+    sf_general = get_speed_figure_avant_course(etat_chevaux, cheval)
+    if sf_general is None:
+        return 0.0
+    return sf_corde_specifique - sf_general
+
+
+def maj_cheval_corde(etat_chevaux_corde, cheval, corde, speed_figure_brut):
+    if corde not in ("CORDE_GAUCHE", "CORDE_DROITE"):
+        return  # ignore LIGNE_DROITE / valeurs manquantes - pas de sens de rotation
+    donnees = etat_chevaux_corde.get(cheval, {"CORDE_GAUCHE": [], "CORDE_DROITE": []})
+    historique = donnees.get(corde, [])
+    historique.append(speed_figure_brut)
+    donnees[corde] = historique[-FENETRE_CORDE:]
+    etat_chevaux_corde[cheval] = donnees
+
+
+# -----------------------------------------------------------------------
 # EXTRACTION DE LA COTE DIRECTE DEPUIS UN PARTICIPANT (API PMU)
 # -----------------------------------------------------------------------
 
@@ -160,34 +233,52 @@ def extraire_cote_directe(participant):
     return None
 
 
+def extraire_deferre_4_pieds(participant):
+    return 1 if participant.get("deferre") == "DEFERRE_ANTERIEURS_POSTERIEURS" else 0
+
+
 # -----------------------------------------------------------------------
 # BANKROLL VIRTUELLE ET MISE KELLY (une bankroll independante par modele)
 # -----------------------------------------------------------------------
 
-FRACTION_KELLY = 0.10   # voir grille de test du 23 juillet 2026
-PLAFOND_MISE = 20       # en euros
-MISE_MINIMUM = 1.50     # mise minimum reelle au PMU (Simple Gagnant) - en dessous, on ignore le pari
-BANKROLL_DEPART = 1236  # en euros
+FRACTION_KELLY = 0.10       # v1.4/v1.5/v1.8 (regime normal)
+FRACTION_KELLY_D4 = 0.05    # v1.8 uniquement, sur les paris D4 (Kelly module)
+PLAFOND_MISE = 20           # en euros
+MISE_MINIMUM = 1.50         # mise minimum reelle au PMU - en dessous, on ignore le pari
+BANKROLL_DEPART = 1236      # en euros
 
 
 def get_bankroll(racine, nom_modele):
-    """nom_modele : 'v14' ou 'v15'. Cree le fichier au depart si absent."""
+    """nom_modele : 'v14', 'v15' ou 'v18'. Cree le fichier au depart si absent."""
     chemin = f"{racine}/bankroll_{nom_modele}.json"
     data = charger_json(chemin, {"bankroll": BANKROLL_DEPART})
     return data["bankroll"], chemin
 
 
 def calculer_mise(proba, cote, bankroll):
-    """Formule de Kelly fractionne (1/10), plafonnee a 20EUR.
-    Si la mise calculee est sous la mise minimum reelle du PMU (1.50EUR),
-    retourne 0 - le pari est alors ignore, plutot que d'arrondir a la
-    hausse (ce qui fausserait la taille de mise voulue par Kelly) ou de
-    gonfler artificiellement la bankroll de depart pour l'eviter."""
+    """Formule de Kelly fractionne (1/10), plafonnee a 20EUR. Utilisee par
+    v1.4/v1.5 (INCHANGEE)."""
     b = cote - 1
     if b <= 0:
         return 0.0
     kelly_full = max(0.0, (proba * b - (1 - proba)) / b)
     kelly_fraction = kelly_full * FRACTION_KELLY
+    mise = min(kelly_fraction * bankroll, PLAFOND_MISE)
+    if mise < MISE_MINIMUM:
+        return 0.0
+    return round(mise, 2)
+
+
+def calculer_mise_v18(proba, cote, bankroll, est_deferre_4_pieds):
+    """Kelly a DEUX regimes pour v1.8 : fraction reduite (1/20) sur les
+    paris D4 (valide le 25 juillet - meilleur ratio gain/risque que la
+    fraction uniforme), fraction normale (1/10) sinon."""
+    b = cote - 1
+    if b <= 0:
+        return 0.0
+    kelly_full = max(0.0, (proba * b - (1 - proba)) / b)
+    fraction = FRACTION_KELLY_D4 if est_deferre_4_pieds else FRACTION_KELLY
+    kelly_fraction = kelly_full * fraction
     mise = min(kelly_fraction * bankroll, PLAFOND_MISE)
     if mise < MISE_MINIMUM:
         return 0.0
