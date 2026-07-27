@@ -47,5 +47,5 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add $(ls etat_drivers.json etat_hippodromes.json etat_chevaux.json etat_chevaux_corde.json courses_notifiees.json paris_virtuels.csv dernier_run.json dernier_heartbeat.json bankroll_v14.json bankroll_v15.json bankroll_v18.json 2>/dev/null)
           git diff --quiet --cached || git commit -m "Mise a jour automatique"
-          git pull --rebase --autostash origin main
+          git pull --rebase --autostash -X ours origin main
           git push
