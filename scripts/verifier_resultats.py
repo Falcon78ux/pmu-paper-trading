@@ -5,14 +5,12 @@ VERIFIER_RESULTATS.PY - Compare aux resultats reels, met a jour l'historique
 A lancer regulierement (toutes les 15-30 min) via GitHub Actions, apres
 verifier_a_venir.py. Pour chaque course deja notifiee dont le resultat est
 maintenant disponible :
-1. Met a jour paris_virtuels.csv avec le resultat (gagnant/perdant) et le
-   gain/perte REEL EN EUROS de chaque pari virtuel logue (mise deja
-   calculee lors de la detection)
-2. Met a jour la bankroll virtuelle (une par modele, v1.4/v1.5)
+1. Met a jour paris_virtuels.csv avec le resultat et le gain/perte reel en
+   euros de chaque pari virtuel logue (v1.4, v1.5, v1.8)
+2. Met a jour la bankroll virtuelle (une par modele)
 3. Met a jour l'etat glissant (driver_forme, biais_hippodrome,
-   speed_figure) pour TOUS les partants de la course
-4. Envoie un message Telegram recapitulatif de la course, avec les
-   montants et la bankroll a jour
+   speed_figure, ET aptitude corde pour v1.8) pour TOUS les partants
+4. Envoie un message Telegram recapitulatif de la course
 =============================================================================
 """
 
@@ -26,7 +24,7 @@ import requests
 sys.path.insert(0, os.path.dirname(__file__))
 from commun import (
     charger_json, sauvegarder_json, envoyer_telegram,
-    maj_driver, maj_hippodrome, maj_cheval,
+    maj_driver, maj_hippodrome, maj_cheval, maj_cheval_corde,
     get_bankroll, mettre_a_jour_bankroll,
 )
 
@@ -57,6 +55,7 @@ def main():
     etat_drivers = charger_json(f"{RACINE}/etat_drivers.json", {})
     etat_hippodromes = charger_json(f"{RACINE}/etat_hippodromes.json", {})
     etat_chevaux = charger_json(f"{RACINE}/etat_chevaux.json", {})
+    etat_chevaux_corde = charger_json(f"{RACINE}/etat_chevaux_corde.json", {})
     constantes = charger_json(f"{RACINE}/constantes.json", {})
     offset_discipline = constantes.get("offset_discipline_monte_moins_attele_ms_km", -400)
     min_partants_sf = constantes.get("min_partants_valides_speed_figure", 6)
@@ -64,6 +63,7 @@ def main():
 
     bankroll_v14, chemin_bankroll_v14 = get_bankroll(RACINE, "v14")
     bankroll_v15, chemin_bankroll_v15 = get_bankroll(RACINE, "v15")
+    bankroll_v18, chemin_bankroll_v18 = get_bankroll(RACINE, "v18")
 
     chemin_log = f"{RACINE}/paris_virtuels.csv"
     if not os.path.exists(chemin_log):
@@ -94,6 +94,7 @@ def main():
 
         infos_course = courses_notifiees.get(race_id, {})
         hippodrome_nom = infos_course.get("hippodrome") if isinstance(infos_course, dict) else None
+        corde_course = infos_course.get("corde", "") if isinstance(infos_course, dict) else ""
 
         # --- 1. Mise a jour de l'etat glissant pour TOUS les partants ---
         valides = []
@@ -117,6 +118,8 @@ def main():
                 sf_brut = track_variant - rk_adj
                 sf_brut = max(-plafond_ecart, min(plafond_ecart, sf_brut))
                 maj_cheval(etat_chevaux, p.get("nom"), sf_brut)
+                if corde_course:
+                    maj_cheval_corde(etat_chevaux_corde, p.get("nom"), corde_course, sf_brut)
 
         somme_ecart_course = 0.0
         nb_partants_course = 0
@@ -142,9 +145,6 @@ def main():
             maj_hippodrome(etat_hippodromes, hippodrome_nom, somme_ecart_course, nb_partants_course)
 
         # --- 2. Mise a jour de paris_virtuels.csv + calcul du gain en euros ---
-        # La bankroll est capturee JUSTE APRES chaque pari individuel, dans
-        # l'ordre, pour que le message Telegram montre la vraie progression
-        # pari par pari plutot que le seul etat final de la course.
         lignes_message = []
         for l in lignes:
             if l["race_id"] != race_id or l.get("resultat", "") != "":
@@ -168,6 +168,9 @@ def main():
             elif l["modele"] == "v1.5":
                 bankroll_v15 += gain_euros
                 bankroll_apres = bankroll_v15
+            elif l["modele"] == "v1.8":
+                bankroll_v18 += gain_euros
+                bankroll_apres = bankroll_v18
             else:
                 bankroll_apres = None
 
@@ -195,13 +198,15 @@ def main():
 
     mettre_a_jour_bankroll(chemin_bankroll_v14, bankroll_v14)
     mettre_a_jour_bankroll(chemin_bankroll_v15, bankroll_v15)
+    mettre_a_jour_bankroll(chemin_bankroll_v18, bankroll_v18)
 
     sauvegarder_json(f"{RACINE}/etat_drivers.json", etat_drivers)
     sauvegarder_json(f"{RACINE}/etat_hippodromes.json", etat_hippodromes)
     sauvegarder_json(f"{RACINE}/etat_chevaux.json", etat_chevaux)
+    sauvegarder_json(f"{RACINE}/etat_chevaux_corde.json", etat_chevaux_corde)
 
     print(f"{len(courses_traitees_ce_run)} courses traitees dans ce run.")
-    print(f"Bankroll v1.4 : {bankroll_v14:.2f}EUR | Bankroll v1.5 : {bankroll_v15:.2f}EUR")
+    print(f"Bankroll v1.4 : {bankroll_v14:.2f}EUR | Bankroll v1.5 : {bankroll_v15:.2f}EUR | Bankroll v1.8 : {bankroll_v18:.2f}EUR")
 
 
 if __name__ == "__main__":
