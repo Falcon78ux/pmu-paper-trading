@@ -252,5 +252,6 @@ if __name__ == "__main__":
     except Exception as e:
         import traceback
         detail = traceback.format_exc()[-500:]
-        envoyer_telegram(f"🔴 <b>Erreur dans verifier_a_venir.py</b>\n\n{e}\n\n<code>{detail}</code>")
+        detail_echappe = detail.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        envoyer_telegram(f"🔴 <b>Erreur dans verifier_a_venir.py</b>\n\n{e}\n\n<code>{detail_echappe}</code>")
         raise
