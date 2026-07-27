@@ -1,0 +1,38 @@
+{
+  "version": "v1.8",
+  "date_entrainement": "2026-07-27",
+  "coefficients": {
+    "const": 0.6810339007208195,
+    "sf_std": 0.06694026330447582,
+    "log_cote": -1.2454439741883276,
+    "driver_std": 0.08661638590546307,
+    "hippo_std": 0.08583092138889786,
+    "interaction_sf_driver": -0.024768924712075268,
+    "nb_partants_std": -0.09902265470655064,
+    "ecart_corde_std": 0.023895095296527256,
+    "deferre_4_pieds": 0.08472731583659332
+  },
+  "standardisation": {
+    "speed_figure_avant_course": {
+      "moyenne": -131.04633767865298,
+      "ecart_type": 795.6044698009134
+    },
+    "driver_forme": {
+      "moyenne": 0.08616053419291453,
+      "ecart_type": 0.06303144854331388
+    },
+    "biais_hippodrome": {
+      "moyenne": 0.0032478320982128484,
+      "ecart_type": 0.0052356221331915954
+    },
+    "nb_partants_course": {
+      "moyenne": 10.424384619676054,
+      "ecart_type": 2.336521344445429
+    },
+    "ecart_corde": {
+      "moyenne": 17.57052569482756,
+      "ecart_type": 428.88339232270084
+    }
+  },
+  "seuil_ev": 0.1
+}
