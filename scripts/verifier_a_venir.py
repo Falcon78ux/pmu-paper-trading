@@ -40,7 +40,7 @@ FENETRE_MAX_MINUTES = 40
 
 def recuperer_programme_du_jour(date_str):
     url = f"https://online.turfinfo.api.pmu.fr/rest/client/61/programme/{date_str}"
-    r = requests.get(url, timeout=20)
+    r = requests.get(url, timeout=35)
     r.raise_for_status()
     data = r.json()
 
