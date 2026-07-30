@@ -2,16 +2,13 @@
 =============================================================================
 VERIFIER_A_VENIR.PY - Detecte les value bets avant chaque course
 =============================================================================
-A lancer regulierement (toutes les 10-15 min) via GitHub Actions. Pour
-chaque course de trot (attele/monte) qui demarre dans la fenetre de
-verification, calcule l'EV de chaque partant avec les modeles v1.4, v1.5
-ET v1.8, calcule la mise Kelly correspondante (bankroll virtuelle
-independante par modele), et notifie par Telegram les value bets
-detectes (EV > SEUIL_EV) avec le montant en euros.
+v1.10 ajoute : age, sexe, taux de victoire carriere (memes variables que
+v1.8 + ces 3-la). Logique EV>seuil identique a v1.8.
 
-v1.8 ajoute : nombre de partants, aptitude corde (etat_chevaux_corde.json,
-nouveau), deferrage 4 pieds, et une mise Kelly a deux regimes (fraction
-reduite sur les paris D4).
+PLACE ajoute : strategie differente - pas de seuil EV (pas de cote place
+connue a l'avance), on parie sur LE cheval avec la plus haute probabilite
+de place par course, mise fixe (10EUR) en attendant une source de cote
+place en direct.
 =============================================================================
 """
 
@@ -26,9 +23,12 @@ import requests
 sys.path.insert(0, os.path.dirname(__file__))
 from commun import (
     charger_json, sauvegarder_json, envoyer_telegram, calculer_proba,
-    calculer_proba_v18, get_driver_forme, get_biais_hippodrome,
-    get_speed_figure_avant_course, get_ecart_corde, extraire_cote_directe,
-    extraire_deferre_4_pieds, get_bankroll, calculer_mise, calculer_mise_v18,
+    calculer_proba_v18, calculer_proba_v110_ou_place, get_driver_forme,
+    get_biais_hippodrome, get_speed_figure_avant_course, get_ecart_corde,
+    extraire_cote_directe, extraire_deferre_4_pieds, extraire_age,
+    extraire_indicateur_femelle, extraire_taux_victoire_carriere,
+    get_bankroll, calculer_mise, calculer_mise_v18, calculer_mise_v110,
+    calculer_mise_place,
 )
 
 RACINE = os.path.join(os.path.dirname(__file__), "..")
@@ -82,11 +82,15 @@ def main():
     modele_v14 = charger_json(f"{RACINE}/modele_v14.json")
     modele_v15 = charger_json(f"{RACINE}/modele_v15.json")
     modele_v18 = charger_json(f"{RACINE}/modele_v18_production.json")
+    modele_v110 = charger_json(f"{RACINE}/modele_v110_production.json")
+    modele_place = charger_json(f"{RACINE}/modele_place_v1_production.json")
     courses_notifiees = charger_json(f"{RACINE}/courses_notifiees.json", {})
 
     bankroll_v14, chemin_bankroll_v14 = get_bankroll(RACINE, "v14")
     bankroll_v15, chemin_bankroll_v15 = get_bankroll(RACINE, "v15")
     bankroll_v18, chemin_bankroll_v18 = get_bankroll(RACINE, "v18")
+    bankroll_v110, chemin_bankroll_v110 = get_bankroll(RACINE, "v110")
+    bankroll_place, chemin_bankroll_place = get_bankroll(RACINE, "place")
 
     try:
         courses = recuperer_programme_du_jour(date_str)
@@ -124,6 +128,8 @@ def main():
         value_bets_v14 = []
         value_bets_v15 = []
         value_bets_v18 = []
+        value_bets_v110 = []
+        candidats_place = []  # tous les partants avec une proba_place valide, pour choisir le top pick
 
         for p in participants:
             if p.get("statut") != "PARTANT":
@@ -166,6 +172,8 @@ def main():
                         if mise15 > 0:
                             value_bets_v15.append((cheval, cote, proba15, ev15, mise15))
 
+            ecart_corde = None
+            deferre_4_pieds = None
             if sf_avant is not None and driver_forme is not None and biais_hippo is not None:
                 ecart_corde = get_ecart_corde(etat_chevaux_corde, etat_chevaux, cheval, course["corde"])
                 deferre_4_pieds = extraire_deferre_4_pieds(p)
@@ -185,37 +193,71 @@ def main():
                         if mise18 > 0:
                             value_bets_v18.append((cheval, cote, proba18, ev18, mise18, deferre_4_pieds))
 
-        if value_bets_v14 or value_bets_v15 or value_bets_v18:
+            # --- v1.10 et PLACE : memes variables supplementaires (age, sexe, taux victoire) ---
+            if sf_avant is not None and driver_forme is not None and biais_hippo is not None and ecart_corde is not None:
+                age = extraire_age(p)
+                indicateur_femelle = extraire_indicateur_femelle(p)
+                taux_victoire_carriere = extraire_taux_victoire_carriere(p)
+
+                valeurs_communes = {
+                    "speed_figure_avant_course": sf_avant, "log_cote": log_cote,
+                    "driver_forme": driver_forme, "biais_hippodrome": biais_hippo,
+                    "nb_partants_course": nb_partants_course, "ecart_corde": ecart_corde,
+                    "deferre_4_pieds": deferre_4_pieds, "age": age,
+                    "indicateur_femelle": indicateur_femelle,
+                    "taux_victoire_carriere": taux_victoire_carriere,
+                }
+
+                proba110 = calculer_proba_v110_ou_place(valeurs_communes, modele_v110)
+                if proba110 is not None:
+                    ev110 = proba110 * cote - 1
+                    if ev110 > SEUIL_EV:
+                        mise110 = calculer_mise_v110(proba110, cote, bankroll_v110, deferre_4_pieds)
+                        if mise110 > 0:
+                            value_bets_v110.append((cheval, cote, proba110, ev110, mise110, deferre_4_pieds))
+
+                proba_place = calculer_proba_v110_ou_place(valeurs_communes, modele_place)
+                if proba_place is not None:
+                    candidats_place.append((cheval, proba_place, cote))
+
+        # --- Selection du top pick PLACE pour cette course (1 seul pari, le plus probable) ---
+        value_bets_place = []
+        if candidats_place:
+            meilleur = max(candidats_place, key=lambda x: x[1])
+            cheval_place, proba_place_choisi, cote_gagnant_associe = meilleur
+            mise_place = calculer_mise_place()
+            value_bets_place.append((cheval_place, proba_place_choisi, mise_place))
+
+        if value_bets_v14 or value_bets_v15 or value_bets_v18 or value_bets_v110 or value_bets_place:
             msg = f"🐎 <b>Course {course['hippodrome']} R{course['num_reunion']}C{course['num_course']}</b>\n"
             msg += f"Depart dans ~{int(minutes_avant_depart)} min\n\n"
             if value_bets_v14:
                 msg += f"<b>Modele v1.4</b> (bankroll : {bankroll_v14:.0f}€) :\n"
                 for cheval, cote, proba, ev, mise in value_bets_v14:
                     msg += f"• {cheval} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>\n"
-                    log_paris.append({
-                        "race_id": race_id, "modele": "v1.4", "cheval": cheval,
-                        "cote": cote, "ev": ev, "mise": mise,
-                        "date_detection": maintenant.isoformat(),
-                    })
+                    log_paris.append({"race_id": race_id, "modele": "v1.4", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
             if value_bets_v15:
                 msg += f"\n<b>Modele v1.5</b> (bankroll : {bankroll_v15:.0f}€) :\n"
                 for cheval, cote, proba, ev, mise in value_bets_v15:
                     msg += f"• {cheval} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>\n"
-                    log_paris.append({
-                        "race_id": race_id, "modele": "v1.5", "cheval": cheval,
-                        "cote": cote, "ev": ev, "mise": mise,
-                        "date_detection": maintenant.isoformat(),
-                    })
+                    log_paris.append({"race_id": race_id, "modele": "v1.5", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
             if value_bets_v18:
                 msg += f"\n<b>Modele v1.8</b> (bankroll : {bankroll_v18:.0f}€) :\n"
                 for cheval, cote, proba, ev, mise, d4 in value_bets_v18:
                     marque_d4 = " [D4]" if d4 else ""
                     msg += f"• {cheval}{marque_d4} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>\n"
-                    log_paris.append({
-                        "race_id": race_id, "modele": "v1.8", "cheval": cheval,
-                        "cote": cote, "ev": ev, "mise": mise,
-                        "date_detection": maintenant.isoformat(),
-                    })
+                    log_paris.append({"race_id": race_id, "modele": "v1.8", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+            if value_bets_v110:
+                msg += f"\n<b>Modele v1.10</b> (bankroll : {bankroll_v110:.0f}€) :\n"
+                for cheval, cote, proba, ev, mise, d4 in value_bets_v110:
+                    marque_d4 = " [D4]" if d4 else ""
+                    msg += f"• {cheval}{marque_d4} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>\n"
+                    log_paris.append({"race_id": race_id, "modele": "v1.10", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+            if value_bets_place:
+                msg += f"\n<b>Modele PLACE</b> (bankroll : {bankroll_place:.0f}€, top pick, mise fixe) :\n"
+                for cheval, proba, mise in value_bets_place:
+                    msg += f"• {cheval} — proba place {proba:.1%}, <b>mise {mise:.2f}€</b>\n"
+                    log_paris.append({"race_id": race_id, "modele": "place", "cheval": cheval, "cote": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
 
             envoyer_telegram(msg)
 
