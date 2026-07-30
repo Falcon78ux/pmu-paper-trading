@@ -287,3 +287,109 @@ def calculer_mise_v18(proba, cote, bankroll, est_deferre_4_pieds):
 
 def mettre_a_jour_bankroll(chemin, nouvelle_bankroll):
     sauvegarder_json(chemin, {"bankroll": round(nouvelle_bankroll, 2)})
+
+# -----------------------------------------------------------------------
+# SCORING COMMUN v1.10 ET PLACE (memes variables, coefficients differents)
+# -----------------------------------------------------------------------
+
+def calculer_proba_v110_ou_place(valeurs_brutes, modele):
+    """
+    Fonction partagee par v1.10 (cible : gagnant) et le modele place
+    (cible : place) - memes variables exactement, seuls les coefficients
+    charges depuis le JSON different.
+
+    valeurs_brutes attendu : {
+        "speed_figure_avant_course", "log_cote", "driver_forme",
+        "biais_hippodrome", "nb_partants_course", "ecart_corde",
+        "deferre_4_pieds", "age", "indicateur_femelle",
+        "taux_victoire_carriere",
+    }
+    modele : dict charge depuis modele_v110_production.json ou
+             modele_place_v1_production.json
+    """
+    coefs = modele["coefficients"]
+    norm = modele["moyennes_ecarts_types"]
+
+    requis = ["speed_figure_avant_course", "driver_forme", "biais_hippodrome",
+              "nb_partants_course", "ecart_corde", "age", "taux_victoire_carriere"]
+    for var in requis:
+        if var not in valeurs_brutes or valeurs_brutes[var] is None:
+            return None
+
+    def std(var):
+        m = norm[var]["moyenne"]
+        s = norm[var]["ecart_type"]
+        return (valeurs_brutes[var] - m) / s
+
+    sf_std = std("speed_figure_avant_course")
+    driver_std = std("driver_forme")
+    hippo_std = std("biais_hippodrome")
+    nb_partants_std = std("nb_partants_course")
+    ecart_corde_std = std("ecart_corde")
+    age_std = std("age")
+    taux_victoire_std = std("taux_victoire_carriere")
+    interaction = sf_std * driver_std
+
+    z = coefs.get("const", 0.0)
+    z += coefs.get("sf_std", 0.0) * sf_std
+    z += coefs.get("log_cote", 0.0) * valeurs_brutes["log_cote"]
+    z += coefs.get("driver_std", 0.0) * driver_std
+    z += coefs.get("hippo_std", 0.0) * hippo_std
+    z += coefs.get("interaction_sf_driver", 0.0) * interaction
+    z += coefs.get("nb_partants_std", 0.0) * nb_partants_std
+    z += coefs.get("ecart_corde_std", 0.0) * ecart_corde_std
+    z += coefs.get("deferre_4_pieds", 0.0) * valeurs_brutes["deferre_4_pieds"]
+    z += coefs.get("age_std", 0.0) * age_std
+    z += coefs.get("indicateur_femelle", 0.0) * valeurs_brutes["indicateur_femelle"]
+    z += coefs.get("taux_victoire_std", 0.0) * taux_victoire_std
+
+    return sigmoid(z)
+
+
+# -----------------------------------------------------------------------
+# EXTRACTION DIRECTE DEPUIS LE PARTICIPANT (pas d'etat glissant necessaire)
+# -----------------------------------------------------------------------
+
+def extraire_age(participant):
+    return participant.get("age")
+
+
+def extraire_indicateur_femelle(participant):
+    return 1 if participant.get("sexe") == "FEMELLES" else 0
+
+
+def extraire_taux_victoire_carriere(participant):
+    nb_courses = participant.get("nombreCourses")
+    nb_victoires = participant.get("nombreVictoires")
+    if not nb_courses or nb_courses == 0:
+        return None
+    return nb_victoires / nb_courses
+
+
+# -----------------------------------------------------------------------
+# MISE KELLY v1.10 (identique structure v1.8 - deux regimes)
+# -----------------------------------------------------------------------
+
+def calculer_mise_v110(proba, cote, bankroll, est_deferre_4_pieds):
+    b = cote - 1
+    if b <= 0:
+        return 0.0
+    kelly_full = max(0.0, (proba * b - (1 - proba)) / b)
+    fraction = FRACTION_KELLY_D4 if est_deferre_4_pieds else FRACTION_KELLY
+    kelly_fraction = kelly_full * fraction
+    mise = min(kelly_fraction * bankroll, PLAFOND_MISE)
+    if mise < MISE_MINIMUM:
+        return 0.0
+    return round(mise, 2)
+
+
+# -----------------------------------------------------------------------
+# MISE FIXE PLACE (pas de cote placee en direct disponible pour l'instant)
+# -----------------------------------------------------------------------
+
+MISE_FIXE_PLACE = 10  # EUR, en attendant une source de cote placee en direct
+
+
+def calculer_mise_place():
+    return MISE_FIXE_PLACE
+
