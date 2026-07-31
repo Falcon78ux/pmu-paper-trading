@@ -2,11 +2,9 @@
 =============================================================================
 VERIFIER_RESULTATS.PY - Compare aux resultats reels, met a jour l'historique
 =============================================================================
-v1.10 ajoute : meme logique que v1.8 (rien de nouveau structurellement).
-
-PLACE ajoute : logique DIFFERENTE - necessite une requete separee vers
-rapports-definitifs (pas juste participants) pour savoir si le cheval
-s'est place et recuperer le rapport reel.
+2SUR4 ajoute : necessite rapports-definitifs (type DEUX_SUR_QUATRE), gain
+si les 2 chevaux paries finissent tous les deux dans les 4 premiers,
+peu importe l'ordre.
 =============================================================================
 """
 
@@ -44,8 +42,7 @@ def recuperer_participants(date_str, num_reunion, num_course):
 
 def recuperer_rapports_place(date_str, num_reunion, num_course):
     """Renvoie un dict {numPmu (int): cote_place} pour les chevaux qui se
-    sont effectivement places. Renvoie None si les rapports ne sont pas
-    encore disponibles (a reessayer au run suivant)."""
+    sont effectivement places. Renvoie None si pas encore disponible."""
     url = f"https://online.turfinfo.api.pmu.fr/rest/client/1/programme/{date_str}/R{num_reunion}/C{num_course}/rapports-definitifs"
     try:
         r = requests.get(url, timeout=20)
@@ -71,6 +68,31 @@ def recuperer_rapports_place(date_str, num_reunion, num_course):
     return resultat
 
 
+def recuperer_rapports_deux_sur_quatre(date_str, num_reunion, num_course):
+    """Renvoie le dividende (cote decimale) du '2 sur 4' pour cette course,
+    ou None si pas encore disponible. N'importe quelle ligne recuperee
+    convient - toutes les combinaisons gagnantes possibles paient pareil."""
+    url = f"https://online.turfinfo.api.pmu.fr/rest/client/1/programme/{date_str}/R{num_reunion}/C{num_course}/rapports-definitifs"
+    try:
+        r = requests.get(url, timeout=20)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+    except Exception:
+        return None
+
+    for pari in data:
+        if pari.get("typePari") != "DEUX_SUR_QUATRE":
+            continue
+        mise_base = pari.get("miseBase", 100)
+        rapports = pari.get("rapports", [])
+        if rapports:
+            dividende = rapports[0].get("dividendePourUneMiseDeBase")
+            if dividende is not None:
+                return dividende / mise_base
+    return None
+
+
 def resultat_disponible(participants):
     return any(p.get("ordreArrivee") is not None for p in participants)
 
@@ -91,6 +113,7 @@ def main():
     bankroll_v18, chemin_bankroll_v18 = get_bankroll(RACINE, "v18")
     bankroll_v110, chemin_bankroll_v110 = get_bankroll(RACINE, "v110")
     bankroll_place, chemin_bankroll_place = get_bankroll(RACINE, "place")
+    bankroll_2sur4, chemin_bankroll_2sur4 = get_bankroll(RACINE, "2sur4")
 
     chemin_log = f"{RACINE}/paris_virtuels.csv"
     if not os.path.exists(chemin_log):
@@ -171,7 +194,7 @@ def main():
         if nb_partants_course > 0 and hippodrome_nom:
             maj_hippodrome(etat_hippodromes, hippodrome_nom, somme_ecart_course, nb_partants_course)
 
-        # --- 1bis. Rapports place, uniquement si un pari "place" est en attente pour cette course ---
+        # --- 1bis. Rapports place, uniquement si un pari "place" est en attente ---
         a_un_pari_place_en_attente = any(
             l["race_id"] == race_id and l["modele"] == "place" and l.get("resultat", "") == ""
             for l in lignes
@@ -181,14 +204,50 @@ def main():
         if a_un_pari_place_en_attente:
             rapports_place = recuperer_rapports_place(date_str, num_reunion, num_course)
             if rapports_place is None:
-                # Pas encore disponible - on retentera au run suivant, mais on
-                # continue quand meme le traitement des AUTRES modeles pour cette course
                 course_place_incomplete = True
+
+        # --- 1ter. Rapport 2 sur 4, uniquement si un pari "2sur4" est en attente ---
+        a_un_pari_2sur4_en_attente = any(
+            l["race_id"] == race_id and l["modele"] == "2sur4" and l.get("resultat", "") == ""
+            for l in lignes
+        )
+        cote_2sur4 = None
+        course_2sur4_incomplete = False
+        if a_un_pari_2sur4_en_attente:
+            cote_2sur4 = recuperer_rapports_deux_sur_quatre(date_str, num_reunion, num_course)
+            if cote_2sur4 is None:
+                course_2sur4_incomplete = True
 
         # --- 2. Mise a jour de paris_virtuels.csv + calcul du gain en euros ---
         lignes_message = []
         for l in lignes:
             if l["race_id"] != race_id or l.get("resultat", "") != "":
+                continue
+
+            if l["modele"] == "2sur4":
+                if course_2sur4_incomplete:
+                    continue
+                chevaux_paries = l["cheval"].split("|")
+                rangs = [
+                    next((p.get("ordreArrivee") for p in participants if p.get("nom") == c), None)
+                    for c in chevaux_paries
+                ]
+                a_gagne = all(r is not None and r <= 4 for r in rangs)
+                mise = float(l.get("mise", 0) or 0)
+
+                gain_euros = mise * (cote_2sur4 - 1) if a_gagne and cote_2sur4 else -mise
+                l["resultat"] = "GAGNANT" if a_gagne else "PERDANT"
+                l["gain_euros"] = f"{gain_euros:.2f}"
+                l["cote"] = f"{cote_2sur4:.2f}" if a_gagne and cote_2sur4 else ""
+
+                bankroll_2sur4 += gain_euros
+                bankroll_apres = bankroll_2sur4
+
+                emoji = "✅" if a_gagne else "❌"
+                lignes_message.append(
+                    f"{emoji} [2sur4] {' + '.join(chevaux_paries)} (mise {mise:.2f}€) "
+                    f"— gain {gain_euros:+.2f}€ | bankroll 2sur4 : {bankroll_apres:.2f}€"
+                )
                 continue
 
             cheval_parie = l["cheval"]
@@ -198,7 +257,7 @@ def main():
 
             if l["modele"] == "place":
                 if course_place_incomplete:
-                    continue  # on retente au run suivant, ligne laissee non traitee
+                    continue
                 num_pmu = participant_correspondant.get("numPmu")
                 mise = float(l.get("mise", 0) or 0)
                 cote_place_reelle = rapports_place.get(num_pmu) if rapports_place else None
@@ -220,7 +279,7 @@ def main():
                 )
                 continue
 
-            # --- Modeles gagnant classiques (v1.4/v1.5/v1.8/v1.10), logique inchangee ---
+            # --- Modeles gagnant classiques (v1.4/v1.5/v1.8/v1.10) ---
             rang = participant_correspondant.get("ordreArrivee")
             gagnant = rang == 1
             cote = float(l["cote"])
@@ -255,7 +314,7 @@ def main():
             msg = f"🏁 <b>Resultat course {race_id}</b>\n\n" + "\n".join(lignes_message)
             envoyer_telegram(msg)
 
-        if not course_place_incomplete:
+        if not course_place_incomplete and not course_2sur4_incomplete:
             courses_traitees_ce_run.append(race_id)
 
     # --- Sauvegarde ---
@@ -273,6 +332,7 @@ def main():
     mettre_a_jour_bankroll(chemin_bankroll_v18, bankroll_v18)
     mettre_a_jour_bankroll(chemin_bankroll_v110, bankroll_v110)
     mettre_a_jour_bankroll(chemin_bankroll_place, bankroll_place)
+    mettre_a_jour_bankroll(chemin_bankroll_2sur4, bankroll_2sur4)
 
     sauvegarder_json(f"{RACINE}/etat_drivers.json", etat_drivers)
     sauvegarder_json(f"{RACINE}/etat_hippodromes.json", etat_hippodromes)
@@ -280,7 +340,7 @@ def main():
     sauvegarder_json(f"{RACINE}/etat_chevaux_corde.json", etat_chevaux_corde)
 
     print(f"{len(courses_traitees_ce_run)} courses traitees dans ce run.")
-    print(f"Bankroll v1.4 : {bankroll_v14:.2f}EUR | v1.5 : {bankroll_v15:.2f}EUR | v1.8 : {bankroll_v18:.2f}EUR | v1.10 : {bankroll_v110:.2f}EUR | place : {bankroll_place:.2f}EUR")
+    print(f"Bankroll v1.4 : {bankroll_v14:.2f}EUR | v1.5 : {bankroll_v15:.2f}EUR | v1.8 : {bankroll_v18:.2f}EUR | v1.10 : {bankroll_v110:.2f}EUR | place : {bankroll_place:.2f}EUR | 2sur4 : {bankroll_2sur4:.2f}EUR")
 
 
 if __name__ == "__main__":
