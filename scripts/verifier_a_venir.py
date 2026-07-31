@@ -2,13 +2,8 @@
 =============================================================================
 VERIFIER_A_VENIR.PY - Detecte les value bets avant chaque course
 =============================================================================
-v1.10 ajoute : age, sexe, taux de victoire carriere (memes variables que
-v1.8 + ces 3-la). Logique EV>seuil identique a v1.8.
-
-PLACE ajoute : strategie differente - pas de seuil EV (pas de cote place
-connue a l'avance), on parie sur LE cheval avec la plus haute probabilite
-de place par course, mise fixe (10EUR) en attendant une source de cote
-place en direct.
+6 strategies en parallele : v1.4, v1.5, v1.8, v1.10 (EV>seuil, mise Kelly),
+PLACE et 2SUR4 (top pick/top 2, mise fixe, pas de cote en direct disponible).
 =============================================================================
 """
 
@@ -91,6 +86,7 @@ def main():
     bankroll_v18, chemin_bankroll_v18 = get_bankroll(RACINE, "v18")
     bankroll_v110, chemin_bankroll_v110 = get_bankroll(RACINE, "v110")
     bankroll_place, chemin_bankroll_place = get_bankroll(RACINE, "place")
+    bankroll_2sur4, chemin_bankroll_2sur4 = get_bankroll(RACINE, "2sur4")
 
     try:
         courses = recuperer_programme_du_jour(date_str)
@@ -129,7 +125,7 @@ def main():
         value_bets_v15 = []
         value_bets_v18 = []
         value_bets_v110 = []
-        candidats_place = []  # tous les partants avec une proba_place valide, pour choisir le top pick
+        candidats_place = []  # tous les partants avec une proba_place valide
 
         for p in participants:
             if p.get("statut") != "PARTANT":
@@ -220,7 +216,7 @@ def main():
                 if proba_place is not None:
                     candidats_place.append((cheval, proba_place, cote))
 
-        # --- Selection du top pick PLACE pour cette course (1 seul pari, le plus probable) ---
+        # --- Selection PLACE : top 1 par course (top pick) ---
         value_bets_place = []
         if candidats_place:
             meilleur = max(candidats_place, key=lambda x: x[1])
@@ -228,7 +224,16 @@ def main():
             mise_place = calculer_mise_place()
             value_bets_place.append((cheval_place, proba_place_choisi, mise_place))
 
-        if value_bets_v14 or value_bets_v15 or value_bets_v18 or value_bets_v110 or value_bets_place:
+        # --- Selection 2 SUR 4 : top 2 par course (reutilise candidats_place) ---
+        value_bets_deux_sur_quatre = []
+        if len(candidats_place) >= 2:
+            top2_deux_sur_quatre = sorted(candidats_place, key=lambda x: x[1], reverse=True)[:2]
+            chevaux_choisis = [c[0] for c in top2_deux_sur_quatre]
+            probas_choisies = [c[1] for c in top2_deux_sur_quatre]
+            mise_2sur4 = calculer_mise_place()  # meme mise fixe que le place
+            value_bets_deux_sur_quatre.append((chevaux_choisis, probas_choisies, mise_2sur4))
+
+        if value_bets_v14 or value_bets_v15 or value_bets_v18 or value_bets_v110 or value_bets_place or value_bets_deux_sur_quatre:
             msg = f"🐎 <b>Course {course['hippodrome']} R{course['num_reunion']}C{course['num_course']}</b>\n"
             msg += f"Depart dans ~{int(minutes_avant_depart)} min\n\n"
             if value_bets_v14:
@@ -258,6 +263,12 @@ def main():
                 for cheval, proba, mise in value_bets_place:
                     msg += f"• {cheval} — proba place {proba:.1%}, <b>mise {mise:.2f}€</b>\n"
                     log_paris.append({"race_id": race_id, "modele": "place", "cheval": cheval, "cote": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
+            if value_bets_deux_sur_quatre:
+                msg += f"\n<b>Modele 2 SUR 4</b> (bankroll : {bankroll_2sur4:.0f}€, top 2, mise fixe) :\n"
+                for chevaux, probas, mise in value_bets_deux_sur_quatre:
+                    noms = " + ".join(chevaux)
+                    msg += f"• {noms} — <b>mise {mise:.2f}€</b>\n"
+                    log_paris.append({"race_id": race_id, "modele": "2sur4", "cheval": "|".join(chevaux), "cote": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
 
             envoyer_telegram(msg)
 
