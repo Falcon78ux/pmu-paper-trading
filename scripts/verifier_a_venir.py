@@ -2,8 +2,12 @@
 =============================================================================
 VERIFIER_A_VENIR.PY - Detecte les value bets avant chaque course
 =============================================================================
-6 strategies en parallele : v1.4, v1.5, v1.8, v1.10 (EV>seuil, mise Kelly),
-PLACE et 2SUR4 (top pick/top 2, mise fixe, pas de cote en direct disponible).
+8 strategies en parallele : v1.4, v1.5, v1.8, v1.10 (EV>seuil, mise Kelly),
+PLACE, 2SUR4, TRIO, MULTI/MINI_MULTI (top pick, mise fixe).
+
+MULTI (14+ partants) et MINI_MULTI (10-13 partants) sont mutuellement
+exclusifs selon la taille du champ - une seule des deux s'applique par
+course.
 =============================================================================
 """
 
@@ -87,6 +91,8 @@ def main():
     bankroll_v110, chemin_bankroll_v110 = get_bankroll(RACINE, "v110")
     bankroll_place, chemin_bankroll_place = get_bankroll(RACINE, "place")
     bankroll_2sur4, chemin_bankroll_2sur4 = get_bankroll(RACINE, "2sur4")
+    bankroll_trio, chemin_bankroll_trio = get_bankroll(RACINE, "trio")
+    bankroll_multi, chemin_bankroll_multi = get_bankroll(RACINE, "multi")
 
     try:
         courses = recuperer_programme_du_jour(date_str)
@@ -189,7 +195,6 @@ def main():
                         if mise18 > 0:
                             value_bets_v18.append((cheval, cote, proba18, ev18, mise18, deferre_4_pieds))
 
-            # --- v1.10 et PLACE : memes variables supplementaires (age, sexe, taux victoire) ---
             if sf_avant is not None and driver_forme is not None and biais_hippo is not None and ecart_corde is not None:
                 age = extraire_age(p)
                 indicateur_femelle = extraire_indicateur_femelle(p)
@@ -216,24 +221,45 @@ def main():
                 if proba_place is not None:
                     candidats_place.append((cheval, proba_place, cote))
 
-        # --- Selection PLACE : top 1 par course (top pick) ---
+        # --- PLACE : top 1 ---
         value_bets_place = []
         if candidats_place:
             meilleur = max(candidats_place, key=lambda x: x[1])
-            cheval_place, proba_place_choisi, cote_gagnant_associe = meilleur
+            cheval_place, proba_place_choisi, _ = meilleur
             mise_place = calculer_mise_place()
             value_bets_place.append((cheval_place, proba_place_choisi, mise_place))
 
-        # --- Selection 2 SUR 4 : top 2 par course (reutilise candidats_place) ---
+        # --- 2 SUR 4 : top 2 ---
         value_bets_deux_sur_quatre = []
         if len(candidats_place) >= 2:
-            top2_deux_sur_quatre = sorted(candidats_place, key=lambda x: x[1], reverse=True)[:2]
-            chevaux_choisis = [c[0] for c in top2_deux_sur_quatre]
-            probas_choisies = [c[1] for c in top2_deux_sur_quatre]
-            mise_2sur4 = calculer_mise_place()  # meme mise fixe que le place
-            value_bets_deux_sur_quatre.append((chevaux_choisis, probas_choisies, mise_2sur4))
+            top2 = sorted(candidats_place, key=lambda x: x[1], reverse=True)[:2]
+            chevaux_choisis = [c[0] for c in top2]
+            mise_2sur4 = calculer_mise_place()
+            value_bets_deux_sur_quatre.append((chevaux_choisis, mise_2sur4))
 
-        if value_bets_v14 or value_bets_v15 or value_bets_v18 or value_bets_v110 or value_bets_place or value_bets_deux_sur_quatre:
+        # --- TRIO (non ordonne) : top 3 ---
+        value_bets_trio = []
+        if len(candidats_place) >= 3:
+            top3 = sorted(candidats_place, key=lambda x: x[1], reverse=True)[:3]
+            chevaux_choisis_trio = [c[0] for c in top3]
+            mise_trio = calculer_mise_place()
+            value_bets_trio.append((chevaux_choisis_trio, mise_trio))
+
+        # --- MULTI (14+ partants) ou MINI_MULTI (10-13 partants) : top 4 ---
+        value_bets_multi = []
+        type_multi = None
+        if nb_partants_course >= 14:
+            type_multi = "MULTI"
+        elif 10 <= nb_partants_course <= 13:
+            type_multi = "MINI_MULTI"
+        if type_multi and len(candidats_place) >= 4:
+            top4 = sorted(candidats_place, key=lambda x: x[1], reverse=True)[:4]
+            chevaux_choisis_multi = [c[0] for c in top4]
+            mise_multi = calculer_mise_place()
+            value_bets_multi.append((chevaux_choisis_multi, mise_multi, type_multi))
+
+        if (value_bets_v14 or value_bets_v15 or value_bets_v18 or value_bets_v110
+                or value_bets_place or value_bets_deux_sur_quatre or value_bets_trio or value_bets_multi):
             msg = f"🐎 <b>Course {course['hippodrome']} R{course['num_reunion']}C{course['num_course']}</b>\n"
             msg += f"Depart dans ~{int(minutes_avant_depart)} min\n\n"
             if value_bets_v14:
@@ -265,10 +291,19 @@ def main():
                     log_paris.append({"race_id": race_id, "modele": "place", "cheval": cheval, "cote": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
             if value_bets_deux_sur_quatre:
                 msg += f"\n<b>Modele 2 SUR 4</b> (bankroll : {bankroll_2sur4:.0f}€, top 2, mise fixe) :\n"
-                for chevaux, probas, mise in value_bets_deux_sur_quatre:
-                    noms = " + ".join(chevaux)
-                    msg += f"• {noms} — <b>mise {mise:.2f}€</b>\n"
+                for chevaux, mise in value_bets_deux_sur_quatre:
+                    msg += f"• {' + '.join(chevaux)} — <b>mise {mise:.2f}€</b>\n"
                     log_paris.append({"race_id": race_id, "modele": "2sur4", "cheval": "|".join(chevaux), "cote": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
+            if value_bets_trio:
+                msg += f"\n<b>Modele TRIO</b> (bankroll : {bankroll_trio:.0f}€, top 3, mise fixe) :\n"
+                for chevaux, mise in value_bets_trio:
+                    msg += f"• {' + '.join(chevaux)} — <b>mise {mise:.2f}€</b>\n"
+                    log_paris.append({"race_id": race_id, "modele": "trio", "cheval": "|".join(chevaux), "cote": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
+            if value_bets_multi:
+                msg += f"\n<b>Modele {type_multi}</b> (bankroll : {bankroll_multi:.0f}€, top 4, mise fixe) :\n"
+                for chevaux, mise, type_pari in value_bets_multi:
+                    msg += f"• {' + '.join(chevaux)} — <b>mise {mise:.2f}€</b>\n"
+                    log_paris.append({"race_id": race_id, "modele": "multi", "cheval": "|".join(chevaux), "cote": type_pari, "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
 
             envoyer_telegram(msg)
 
