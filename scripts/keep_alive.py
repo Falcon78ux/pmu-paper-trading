@@ -2,7 +2,7 @@
 =============================================================================
 KEEP_ALIVE.PY - Battement de coeur quotidien AVEC statistiques de performance
 =============================================================================
-v1.10 et PLACE ajoutes au bilan quotidien.
+6 modeles maintenant : v1.4, v1.5, v1.8, v1.10, place, 2sur4.
 =============================================================================
 """
 
@@ -25,7 +25,7 @@ def calculer_stats_modele(lignes, nom_modele):
         return None
 
     nb_paris = len(sous_ensemble)
-    # "place" utilise PLACE/NON_PLACE au lieu de GAGNANT/PERDANT
+    # "place" et "2sur4" utilisent GAGNANT/PERDANT (comme les autres modeles ici)
     nb_gagnants = sum(1 for l in sous_ensemble if l.get("resultat") in ("GAGNANT", "PLACE"))
     taux_victoire = nb_gagnants / nb_paris if nb_paris > 0 else 0
 
@@ -68,12 +68,14 @@ def main():
         bankroll_v18 = charger_json(f"{RACINE}/bankroll_v18.json", {}).get("bankroll")
         bankroll_v110 = charger_json(f"{RACINE}/bankroll_v110.json", {}).get("bankroll")
         bankroll_place = charger_json(f"{RACINE}/bankroll_place.json", {}).get("bankroll")
+        bankroll_2sur4 = charger_json(f"{RACINE}/bankroll_2sur4.json", {}).get("bankroll")
 
         stats_v14 = calculer_stats_modele(lignes, "v1.4")
         stats_v15 = calculer_stats_modele(lignes, "v1.5")
         stats_v18 = calculer_stats_modele(lignes, "v1.8")
         stats_v110 = calculer_stats_modele(lignes, "v1.10")
         stats_place = calculer_stats_modele(lignes, "place")
+        stats_2sur4 = calculer_stats_modele(lignes, "2sur4")
 
         etat_drivers = charger_json(f"{RACINE}/etat_drivers.json", {})
         etat_hippodromes = charger_json(f"{RACINE}/etat_hippodromes.json", {})
@@ -84,7 +86,7 @@ def main():
         for nom, stats, bankroll in [
             ("v1.4", stats_v14, bankroll_v14), ("v1.5", stats_v15, bankroll_v15),
             ("v1.8", stats_v18, bankroll_v18), ("v1.10", stats_v110, bankroll_v110),
-            ("place", stats_place, bankroll_place),
+            ("place", stats_place, bankroll_place), ("2sur4", stats_2sur4, bankroll_2sur4),
         ]:
             msg += f"<b>{nom}</b>\n"
             if bankroll is not None:
@@ -93,7 +95,7 @@ def main():
             if stats:
                 msg += (
                     f"{stats['nb_paris']} paris traites, "
-                    f"{stats['taux_victoire']:.1%} de {'reussite' if nom == 'place' else 'victoires'}\n"
+                    f"{stats['taux_victoire']:.1%} de {'reussite' if nom in ('place','2sur4') else 'victoires'}\n"
                     f"Mise totale : {stats['mise_totale']:.2f}€, "
                     f"gain net : {stats['gain_total']:+.2f}€ "
                     f"(ROI {stats['roi']:+.1%})\n"
