@@ -2,7 +2,7 @@
 =============================================================================
 KEEP_ALIVE.PY - Battement de coeur quotidien AVEC statistiques de performance
 =============================================================================
-6 modeles maintenant : v1.4, v1.5, v1.8, v1.10, place, 2sur4.
+8 modeles : v1.4, v1.5, v1.8, v1.10, place, 2sur4, trio, multi.
 =============================================================================
 """
 
@@ -16,7 +16,7 @@ from commun import charger_json, sauvegarder_json, envoyer_telegram
 
 RACINE = os.path.join(os.path.dirname(__file__), "..")
 
-HEURE_HEARTBEAT = 8  # heure UTC a laquelle envoyer le message quotidien
+HEURE_HEARTBEAT = 8
 
 
 def calculer_stats_modele(lignes, nom_modele):
@@ -25,7 +25,6 @@ def calculer_stats_modele(lignes, nom_modele):
         return None
 
     nb_paris = len(sous_ensemble)
-    # "place" et "2sur4" utilisent GAGNANT/PERDANT (comme les autres modeles ici)
     nb_gagnants = sum(1 for l in sous_ensemble if l.get("resultat") in ("GAGNANT", "PLACE"))
     taux_victoire = nb_gagnants / nb_paris if nb_paris > 0 else 0
 
@@ -63,19 +62,15 @@ def main():
         nb_traites = sum(1 for l in lignes if l.get("resultat", "") != "")
         nb_en_attente = nb_paris_total - nb_traites
 
-        bankroll_v14 = charger_json(f"{RACINE}/bankroll_v14.json", {}).get("bankroll")
-        bankroll_v15 = charger_json(f"{RACINE}/bankroll_v15.json", {}).get("bankroll")
-        bankroll_v18 = charger_json(f"{RACINE}/bankroll_v18.json", {}).get("bankroll")
-        bankroll_v110 = charger_json(f"{RACINE}/bankroll_v110.json", {}).get("bankroll")
-        bankroll_place = charger_json(f"{RACINE}/bankroll_place.json", {}).get("bankroll")
-        bankroll_2sur4 = charger_json(f"{RACINE}/bankroll_2sur4.json", {}).get("bankroll")
+        bankrolls = {
+            nom: charger_json(f"{RACINE}/bankroll_{nom}.json", {}).get("bankroll")
+            for nom in ["v14", "v15", "v18", "v110", "place", "2sur4", "trio", "multi"]
+        }
 
-        stats_v14 = calculer_stats_modele(lignes, "v1.4")
-        stats_v15 = calculer_stats_modele(lignes, "v1.5")
-        stats_v18 = calculer_stats_modele(lignes, "v1.8")
-        stats_v110 = calculer_stats_modele(lignes, "v1.10")
-        stats_place = calculer_stats_modele(lignes, "place")
-        stats_2sur4 = calculer_stats_modele(lignes, "2sur4")
+        noms_affichage = {
+            "v14": "v1.4", "v15": "v1.5", "v18": "v1.8", "v110": "v1.10",
+            "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
+        }
 
         etat_drivers = charger_json(f"{RACINE}/etat_drivers.json", {})
         etat_hippodromes = charger_json(f"{RACINE}/etat_hippodromes.json", {})
@@ -83,19 +78,17 @@ def main():
         msg = f"\U0001F4CA <b>Bilan quotidien</b> \u2014 {maintenant.strftime('%d/%m/%Y %H:%M')} UTC\n\n"
         msg += f"Paris logues : {nb_paris_total} ({nb_traites} traites, {nb_en_attente} en attente)\n\n"
 
-        for nom, stats, bankroll in [
-            ("v1.4", stats_v14, bankroll_v14), ("v1.5", stats_v15, bankroll_v15),
-            ("v1.8", stats_v18, bankroll_v18), ("v1.10", stats_v110, bankroll_v110),
-            ("place", stats_place, bankroll_place), ("2sur4", stats_2sur4, bankroll_2sur4),
-        ]:
-            msg += f"<b>{nom}</b>\n"
+        for cle, nom_affiche in noms_affichage.items():
+            stats = calculer_stats_modele(lignes, nom_affiche)
+            bankroll = bankrolls[cle]
+            msg += f"<b>{nom_affiche}</b>\n"
             if bankroll is not None:
                 variation = bankroll - 1236
                 msg += f"Bankroll : {bankroll:.2f}€ ({variation:+.2f}€)\n"
             if stats:
                 msg += (
                     f"{stats['nb_paris']} paris traites, "
-                    f"{stats['taux_victoire']:.1%} de {'reussite' if nom in ('place','2sur4') else 'victoires'}\n"
+                    f"{stats['taux_victoire']:.1%} de reussite\n"
                     f"Mise totale : {stats['mise_totale']:.2f}€, "
                     f"gain net : {stats['gain_total']:+.2f}€ "
                     f"(ROI {stats['roi']:+.1%})\n"
