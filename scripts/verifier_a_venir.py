@@ -8,6 +8,11 @@ PLACE, 2SUR4, TRIO, MULTI/MINI_MULTI (top pick, mise fixe).
 MULTI (14+ partants) et MINI_MULTI (10-13 partants) sont mutuellement
 exclusifs selon la taille du champ - une seule des deux s'applique par
 course.
+
+Ajout diagnostic_couverture.csv : journalise, pour CHAQUE course de trot
+traitee (pas seulement celles avec un pari), combien de partants avaient
+toutes les donnees necessaires - pour comprendre pourquoi certaines
+courses ne generent aucun pari combine (place/2sur4/trio/multi).
 =============================================================================
 """
 
@@ -15,6 +20,7 @@ import sys
 import os
 import json
 import math
+import csv as csv_module  # eviter collision avec le csv importe plus bas dans main()
 from datetime import datetime, timezone, timedelta
 
 import requests
@@ -127,6 +133,12 @@ def main():
 
         nb_partants_course = sum(1 for p in participants if p.get("statut") == "PARTANT")
 
+        # --- Diagnostic de couverture (pourquoi certaines courses n'ont aucun pari combine) ---
+        diag = {
+            "sans_cote": 0, "sans_sf": 0, "sans_driver_forme": 0,
+            "sans_biais_hippo": 0, "sans_ecart_corde": 0, "valides_pour_place": 0,
+        }
+
         value_bets_v14 = []
         value_bets_v15 = []
         value_bets_v18 = []
@@ -139,12 +151,23 @@ def main():
             cheval = p.get("nom")
             driver = p.get("driver") or p.get("entraineur")
             cote = extraire_cote_directe(p)
-            if cote is None or cote <= 1:
-                continue
 
             sf_avant = get_speed_figure_avant_course(etat_chevaux, cheval)
             driver_forme = get_driver_forme(etat_drivers, driver)
             biais_hippo = get_biais_hippodrome(etat_hippodromes, course["hippodrome"])
+
+            if cote is None or cote <= 1:
+                diag["sans_cote"] += 1
+            elif sf_avant is None:
+                diag["sans_sf"] += 1
+            elif driver_forme is None:
+                diag["sans_driver_forme"] += 1
+            elif biais_hippo is None:
+                diag["sans_biais_hippo"] += 1
+
+            if cote is None or cote <= 1:
+                continue
+
             log_cote = math.log(cote)
 
             if sf_avant is not None and driver_forme is not None:
@@ -194,6 +217,8 @@ def main():
                         mise18 = calculer_mise_v18(proba18, cote, bankroll_v18, deferre_4_pieds)
                         if mise18 > 0:
                             value_bets_v18.append((cheval, cote, proba18, ev18, mise18, deferre_4_pieds))
+            else:
+                diag["sans_ecart_corde"] += 1
 
             if sf_avant is not None and driver_forme is not None and biais_hippo is not None and ecart_corde is not None:
                 age = extraire_age(p)
@@ -220,6 +245,24 @@ def main():
                 proba_place = calculer_proba_v110_ou_place(valeurs_communes, modele_place)
                 if proba_place is not None:
                     candidats_place.append((cheval, proba_place, cote))
+
+        diag["valides_pour_place"] = len(candidats_place)
+
+        chemin_diag = f"{RACINE}/diagnostic_couverture.csv"
+        existe_diag = os.path.exists(chemin_diag)
+        with open(chemin_diag, "a", newline="", encoding="utf-8") as f:
+            writer_diag = csv_module.DictWriter(f, fieldnames=[
+                "race_id", "hippodrome", "nb_partants", "sans_cote", "sans_sf",
+                "sans_driver_forme", "sans_biais_hippo", "sans_ecart_corde",
+                "valides_pour_place", "date_verif",
+            ])
+            if not existe_diag:
+                writer_diag.writeheader()
+            writer_diag.writerow({
+                "race_id": race_id, "hippodrome": course["hippodrome"],
+                "nb_partants": nb_partants_course, **diag,
+                "date_verif": maintenant.isoformat(),
+            })
 
         # --- PLACE : top 1 ---
         value_bets_place = []
