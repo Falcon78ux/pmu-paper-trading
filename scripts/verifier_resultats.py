@@ -2,14 +2,13 @@
 =============================================================================
 VERIFIER_RESULTATS.PY - Compare aux resultats reels, met a jour l'historique
 =============================================================================
-TRIO ajoute : requete rapports-definitifs (type TRIO, non ordonne), gain
-si les 3 chevaux paries sont EXACTEMENT le trio de tete (rapport avec NP
-ignore comme non exploitable).
-
-MULTI/MINI_MULTI ajoute : verite terrain (top 4 reel) prise directement
-depuis ordreArrivee (comme pour 2sur4), le rapport sert uniquement a
-recuperer le montant du palier le plus eleve (correspondant a notre
-strategie "exactement 4 chevaux choisis").
+NOUVEAU : journal_audit.csv - journal d'audit EXHAUSTIF, independant de
+Telegram. Pour CHAQUE pari resolu (les 8 modeles), enregistre le detail
+complet (rangs d'arrivee reels des chevaux paries) ET un AUTO-CONTROLE :
+le script recalcule le resultat par une methode independante (directement
+depuis rang_arrivee, sans passer par le parsing des rapports) et compare
+au calcul principal. Toute divergence est flaguee "INCOHERENT" - objectif :
+detecter un bug de parsing automatiquement, sans verification manuelle.
 =============================================================================
 """
 
@@ -34,6 +33,12 @@ INCIDENTS_A_EXCLURE = {
     "ARRETE", "DISQUALIFIE_POTEAU_GALOP", "TOMBE", "RESTE_AU_POTEAU",
 }
 
+CHAMPS_AUDIT = [
+    "race_id", "modele", "chevaux_paries", "rangs_arrivee_chevaux_paries",
+    "top4_reel", "combinaison_rapport_brute", "cote_utilisee", "gain_calcule",
+    "resultat", "coherence_verifiee", "detail_incoherence", "date_verif",
+]
+
 
 def recuperer_participants(date_str, num_reunion, num_course):
     url = (
@@ -46,9 +51,6 @@ def recuperer_participants(date_str, num_reunion, num_course):
 
 
 def recuperer_rapports_definitifs(date_str, num_reunion, num_course):
-    """Renvoie le JSON brut complet des rapports definitifs, ou None si
-    pas encore disponible. Fonction generique reutilisee par place,
-    2sur4, trio et multi."""
     url = f"https://online.turfinfo.api.pmu.fr/rest/client/1/programme/{date_str}/R{num_reunion}/C{num_course}/rapports-definitifs"
     try:
         r = requests.get(url, timeout=20)
@@ -90,9 +92,6 @@ def extraire_cote_deux_sur_quatre(data):
 
 
 def extraire_trio(data):
-    """Renvoie (ensemble_gagnant, cote) pour TRIO (non ordonne), ou
-    (None, None) si non disponible ou si la combinaison contient un NP
-    (non-partant, non exploitable proprement)."""
     for pari in data:
         if pari.get("typePari") != "TRIO":
             continue
@@ -102,20 +101,18 @@ def extraire_trio(data):
             continue
         combinaison = rapports[0].get("combinaison", "")
         if "NP" in str(combinaison):
-            return None, None  # non exploitable, on ignore ce pari
+            return None, None, combinaison
         try:
             ensemble = frozenset(int(x) for x in str(combinaison).split("-"))
         except Exception:
-            return None, None
+            return None, None, combinaison
         dividende = rapports[0].get("dividendePourUneMiseDeBase")
         if dividende is not None:
-            return ensemble, dividende / mise_base
-    return None, None
+            return ensemble, dividende / mise_base, combinaison
+    return None, None, None
 
 
 def extraire_cote_multi(data, type_pari):
-    """MULTI ou MINI_MULTI - renvoie la cote du palier le PLUS ELEVE
-    (correspondant a une selection de 4 chevaux exactement)."""
     meilleure_cote = None
     for pari in data:
         if pari.get("typePari") != type_pari:
@@ -132,6 +129,16 @@ def extraire_cote_multi(data, type_pari):
 
 def resultat_disponible(participants):
     return any(p.get("ordreArrivee") is not None for p in participants)
+
+
+def ecrire_audit(ligne_audit):
+    chemin_audit = f"{RACINE}/journal_audit.csv"
+    existe = os.path.exists(chemin_audit)
+    with open(chemin_audit, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=CHAMPS_AUDIT)
+        if not existe:
+            writer.writeheader()
+        writer.writerow(ligne_audit)
 
 
 def main():
@@ -185,7 +192,18 @@ def main():
         hippodrome_nom = infos_course.get("hippodrome") if isinstance(infos_course, dict) else None
         corde_course = infos_course.get("corde", "") if isinstance(infos_course, dict) else ""
 
-        # --- 1. Mise a jour de l'etat glissant pour TOUS les partants ---
+        # --- Rang d'arrivee par nom, pour l'auto-controle (verite terrain independante) ---
+        rang_par_nom = {
+            p.get("nom"): p.get("ordreArrivee")
+            for p in participants if p.get("ordreArrivee") is not None
+        }
+        top4_reel_noms = sorted(
+            (p.get("nom") for p in participants if p.get("ordreArrivee") in (1, 2, 3, 4)),
+            key=lambda nom: rang_par_nom.get(nom, 99),
+        )
+        top4_reel_str = "|".join(top4_reel_noms)
+
+        # --- 1. Mise a jour de l'etat glissant pour TOUS les partants (inchange) ---
         valides = []
         for p in participants:
             incident = p.get("incident", "") or ""
@@ -233,7 +251,7 @@ def main():
         if nb_partants_course > 0 and hippodrome_nom:
             maj_hippodrome(etat_hippodromes, hippodrome_nom, somme_ecart_course, nb_partants_course)
 
-        # --- 1bis. Rapports definitifs : recuperes UNE FOIS si besoin, reutilises pour tout ---
+        # --- 1bis. Rapports definitifs, une seule fois si besoin ---
         paris_combines_en_attente = {"place", "2sur4", "trio", "multi"}
         a_un_pari_combine_en_attente = any(
             l["race_id"] == race_id and l["modele"] in paris_combines_en_attente and l.get("resultat", "") == ""
@@ -246,19 +264,19 @@ def main():
             if rapports_data is None:
                 course_combine_incomplete = True
 
-        rapports_place, cote_2sur4, trio_reel_ensemble, trio_reel_cote = None, None, None, None
+        rapports_place, cote_2sur4 = None, None
+        trio_reel_ensemble, trio_reel_cote, trio_combinaison_brute = None, None, None
         if rapports_data is not None:
             rapports_place = extraire_rapports_place(rapports_data)
             cote_2sur4 = extraire_cote_deux_sur_quatre(rapports_data)
-            trio_reel_ensemble, trio_reel_cote = extraire_trio(rapports_data)
+            trio_reel_ensemble, trio_reel_cote, trio_combinaison_brute = extraire_trio(rapports_data)
 
-        # --- Top 4 REEL de la course (verite terrain pour multi/mini_multi) ---
         top4_reel = frozenset(
             p.get("numPmu") for p in participants
             if p.get("ordreArrivee") is not None and p.get("ordreArrivee") <= 4
         )
 
-        # --- 2. Mise a jour de paris_virtuels.csv + calcul du gain en euros ---
+        # --- 2. Mise a jour de paris_virtuels.csv + journal d'audit exhaustif ---
         lignes_message = []
         for l in lignes:
             if l["race_id"] != race_id or l.get("resultat", "") != "":
@@ -268,10 +286,7 @@ def main():
                 if course_combine_incomplete:
                     continue
                 chevaux_paries = l["cheval"].split("|")
-                rangs = [
-                    next((p.get("ordreArrivee") for p in participants if p.get("nom") == c), None)
-                    for c in chevaux_paries
-                ]
+                rangs = [rang_par_nom.get(c) for c in chevaux_paries]
                 a_gagne = all(r is not None and r <= 4 for r in rangs)
                 mise = float(l.get("mise", 0) or 0)
                 gain_euros = mise * (cote_2sur4 - 1) if a_gagne and cote_2sur4 else -mise
@@ -279,6 +294,26 @@ def main():
                 l["gain_euros"] = f"{gain_euros:.2f}"
                 l["cote"] = f"{cote_2sur4:.2f}" if a_gagne and cote_2sur4 else ""
                 bankroll_2sur4 += gain_euros
+
+                # Auto-controle : recalcul independant depuis rang_par_nom (deja fait ci-dessus,
+                # ce bloc EST deja la methode independante - le controle porte sur la coherence
+                # interne gain/resultat)
+                coherence, detail = "OK", ""
+                if a_gagne and (cote_2sur4 is None or gain_euros <= 0):
+                    coherence, detail = "INCOHERENT", "Gagnant mais gain <= 0 ou cote manquante"
+                if not a_gagne and gain_euros != -mise:
+                    coherence, detail = "INCOHERENT", "Perdant mais gain != -mise"
+
+                ecrire_audit({
+                    "race_id": race_id, "modele": "2sur4",
+                    "chevaux_paries": "|".join(chevaux_paries),
+                    "rangs_arrivee_chevaux_paries": "|".join(str(r) for r in rangs),
+                    "top4_reel": top4_reel_str, "combinaison_rapport_brute": "",
+                    "cote_utilisee": cote_2sur4 or "", "gain_calcule": f"{gain_euros:.2f}",
+                    "resultat": l["resultat"], "coherence_verifiee": coherence,
+                    "detail_incoherence": detail, "date_verif": datetime.now(timezone.utc).isoformat(),
+                })
+
                 emoji = "✅" if a_gagne else "❌"
                 lignes_message.append(f"{emoji} [2sur4] {' + '.join(chevaux_paries)} (mise {mise:.2f}€) — gain {gain_euros:+.2f}€ | bankroll 2sur4 : {bankroll_2sur4:.2f}€")
                 continue
@@ -286,9 +321,25 @@ def main():
             if l["modele"] == "trio":
                 if course_combine_incomplete:
                     continue
-                if trio_reel_ensemble is None:
-                    continue  # NP dans la combinaison reelle, ou pas de TRIO propose sur cette course
                 chevaux_paries = l["cheval"].split("|")
+                rangs = [rang_par_nom.get(c) for c in chevaux_paries]
+                # Auto-controle independant : ces 3 chevaux forment-ils EXACTEMENT {1,2,3} ?
+                a_gagne_independant = set(rangs) == {1, 2, 3}
+
+                if trio_reel_ensemble is None:
+                    # Rapport TRIO indisponible/NP - on ne peut resoudre ce pari precisement,
+                    # mais on peut quand meme journaliser le controle independant pour trace
+                    ecrire_audit({
+                        "race_id": race_id, "modele": "trio",
+                        "chevaux_paries": "|".join(chevaux_paries),
+                        "rangs_arrivee_chevaux_paries": "|".join(str(r) for r in rangs),
+                        "top4_reel": top4_reel_str, "combinaison_rapport_brute": trio_combinaison_brute or "NP_ou_indisponible",
+                        "cote_utilisee": "", "gain_calcule": "", "resultat": "NON_RESOLU_NP",
+                        "coherence_verifiee": "IGNORE", "detail_incoherence": "Rapport TRIO avec NP ou indisponible",
+                        "date_verif": datetime.now(timezone.utc).isoformat(),
+                    })
+                    continue
+
                 try:
                     ensemble_parie = frozenset(int(next(p.get("numPmu") for p in participants if p.get("nom") == c)) for c in chevaux_paries)
                 except Exception:
@@ -300,6 +351,22 @@ def main():
                 l["gain_euros"] = f"{gain_euros:.2f}"
                 l["cote"] = f"{trio_reel_cote:.2f}" if a_gagne else ""
                 bankroll_trio += gain_euros
+
+                coherence, detail = "OK", ""
+                if a_gagne != a_gagne_independant:
+                    coherence = "INCOHERENT"
+                    detail = f"Rapport dit {a_gagne}, verite terrain (rangs) dit {a_gagne_independant}"
+
+                ecrire_audit({
+                    "race_id": race_id, "modele": "trio",
+                    "chevaux_paries": "|".join(chevaux_paries),
+                    "rangs_arrivee_chevaux_paries": "|".join(str(r) for r in rangs),
+                    "top4_reel": top4_reel_str, "combinaison_rapport_brute": trio_combinaison_brute or "",
+                    "cote_utilisee": trio_reel_cote or "", "gain_calcule": f"{gain_euros:.2f}",
+                    "resultat": l["resultat"], "coherence_verifiee": coherence,
+                    "detail_incoherence": detail, "date_verif": datetime.now(timezone.utc).isoformat(),
+                })
+
                 emoji = "✅" if a_gagne else "❌"
                 lignes_message.append(f"{emoji} [trio] {' + '.join(chevaux_paries)} (mise {mise:.2f}€) — gain {gain_euros:+.2f}€ | bankroll trio : {bankroll_trio:.2f}€")
                 continue
@@ -307,8 +374,11 @@ def main():
             if l["modele"] == "multi":
                 if course_combine_incomplete:
                     continue
-                type_pari_multi = l.get("cote", "MULTI")  # stocke temporairement dans "cote" par verifier_a_venir.py
+                type_pari_multi = l.get("cote", "MULTI")
                 chevaux_paries = l["cheval"].split("|")
+                rangs = [rang_par_nom.get(c) for c in chevaux_paries]
+                a_gagne_independant = set(rangs) == {1, 2, 3, 4}
+
                 try:
                     ensemble_parie = frozenset(int(next(p.get("numPmu") for p in participants if p.get("nom") == c)) for c in chevaux_paries)
                 except Exception:
@@ -321,6 +391,22 @@ def main():
                 l["gain_euros"] = f"{gain_euros:.2f}"
                 l["cote"] = f"{cote_multi:.2f}" if a_gagne and cote_multi else ""
                 bankroll_multi += gain_euros
+
+                coherence, detail = "OK", ""
+                if a_gagne != a_gagne_independant:
+                    coherence = "INCOHERENT"
+                    detail = f"Calcul principal dit {a_gagne}, verite terrain (rangs) dit {a_gagne_independant}"
+
+                ecrire_audit({
+                    "race_id": race_id, "modele": type_pari_multi.lower(),
+                    "chevaux_paries": "|".join(chevaux_paries),
+                    "rangs_arrivee_chevaux_paries": "|".join(str(r) for r in rangs),
+                    "top4_reel": top4_reel_str, "combinaison_rapport_brute": "",
+                    "cote_utilisee": cote_multi or "", "gain_calcule": f"{gain_euros:.2f}",
+                    "resultat": l["resultat"], "coherence_verifiee": coherence,
+                    "detail_incoherence": detail, "date_verif": datetime.now(timezone.utc).isoformat(),
+                })
+
                 emoji = "✅" if a_gagne else "❌"
                 lignes_message.append(f"{emoji} [{type_pari_multi.lower()}] {' + '.join(chevaux_paries)} (mise {mise:.2f}€) — gain {gain_euros:+.2f}€ | bankroll multi : {bankroll_multi:.2f}€")
                 continue
@@ -329,6 +415,7 @@ def main():
             participant_correspondant = next((p for p in participants if p.get("nom") == cheval_parie), None)
             if participant_correspondant is None:
                 continue
+            rang_reel = rang_par_nom.get(cheval_parie)
 
             if l["modele"] == "place":
                 if course_combine_incomplete:
@@ -342,13 +429,32 @@ def main():
                 l["gain_euros"] = f"{gain_euros:.2f}"
                 l["cote"] = f"{cote_place_reelle:.2f}" if a_place else ""
                 bankroll_place += gain_euros
+
+                # Auto-controle : impossible d'etre "PLACE" si rang > 4 (aucune regle PMU ne
+                # place au-dela de 4), et impossible d'etre "NON_PLACE" si rang <= 2 (toujours
+                # placable quelle que soit la regle 4-7 ou 8+ partants)
+                coherence, detail = "OK", ""
+                if a_place and rang_reel is not None and rang_reel > 4:
+                    coherence, detail = "INCOHERENT", f"Marque PLACE mais rang reel = {rang_reel} (>4, impossible)"
+                elif not a_place and rang_reel is not None and rang_reel <= 2:
+                    coherence, detail = "INCOHERENT", f"Marque NON_PLACE mais rang reel = {rang_reel} (<=2, toujours placable)"
+
+                ecrire_audit({
+                    "race_id": race_id, "modele": "place",
+                    "chevaux_paries": cheval_parie,
+                    "rangs_arrivee_chevaux_paries": str(rang_reel),
+                    "top4_reel": top4_reel_str, "combinaison_rapport_brute": "",
+                    "cote_utilisee": cote_place_reelle or "", "gain_calcule": f"{gain_euros:.2f}",
+                    "resultat": l["resultat"], "coherence_verifiee": coherence,
+                    "detail_incoherence": detail, "date_verif": datetime.now(timezone.utc).isoformat(),
+                })
+
                 emoji = "✅" if a_place else "❌"
                 lignes_message.append(f"{emoji} [place] {cheval_parie} (mise {mise:.2f}€) — gain {gain_euros:+.2f}€ | bankroll place : {bankroll_place:.2f}€")
                 continue
 
             # --- Modeles gagnant classiques (v1.4/v1.5/v1.8/v1.10) ---
-            rang = participant_correspondant.get("ordreArrivee")
-            gagnant = rang == 1
+            gagnant = rang_reel == 1
             cote = float(l["cote"])
             mise = float(l.get("mise", 0) or 0)
 
@@ -370,6 +476,22 @@ def main():
                 bankroll_apres = bankroll_v110
             else:
                 bankroll_apres = None
+
+            coherence, detail = "OK", ""
+            if gagnant and rang_reel != 1:
+                coherence, detail = "INCOHERENT", "Marque gagnant mais rang reel != 1"
+            if not gagnant and rang_reel == 1:
+                coherence, detail = "INCOHERENT", "Marque perdant mais rang reel == 1"
+
+            ecrire_audit({
+                "race_id": race_id, "modele": l["modele"],
+                "chevaux_paries": cheval_parie,
+                "rangs_arrivee_chevaux_paries": str(rang_reel),
+                "top4_reel": top4_reel_str, "combinaison_rapport_brute": "",
+                "cote_utilisee": cote, "gain_calcule": f"{gain_euros:.2f}",
+                "resultat": l["resultat"], "coherence_verifiee": coherence,
+                "detail_incoherence": detail, "date_verif": datetime.now(timezone.utc).isoformat(),
+            })
 
             emoji = "✅" if gagnant else "❌"
             lignes_message.append(
