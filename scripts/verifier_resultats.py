@@ -2,10 +2,10 @@
 =============================================================================
 VERIFIER_RESULTATS.PY - Compare aux resultats reels, met a jour l'historique
 =============================================================================
-Journal d'audit exhaustif (journal_audit.csv) + respect de etat_pause.json
-UNIQUEMENT pour la notification Telegram (jamais pour le calcul du gain,
-la mise a jour de bankroll, ni le journal d'audit - ces trois choses
-s'executent TOUJOURS, meme en pause).
+DEUXIEME FAVORI ajoute : resolution standard marche gagnant (comme
+v1.4/v1.5/v1.8/v1.10), PLUS mise a jour de etat_dernier_rang.json pour
+TOUS les partants de TOUTES les courses (pas seulement ceux avec un
+pari) - necessaire pour detecter la condition sur les courses futures.
 =============================================================================
 """
 
@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from commun import (
     charger_json, sauvegarder_json, envoyer_telegram,
     maj_driver, maj_hippodrome, maj_cheval, maj_cheval_corde,
-    get_bankroll, mettre_a_jour_bankroll,
+    maj_dernier_rang, get_bankroll, mettre_a_jour_bankroll,
 )
 
 RACINE = os.path.join(os.path.dirname(__file__), "..")
@@ -144,6 +144,7 @@ def main():
     etat_hippodromes = charger_json(f"{RACINE}/etat_hippodromes.json", {})
     etat_chevaux = charger_json(f"{RACINE}/etat_chevaux.json", {})
     etat_chevaux_corde = charger_json(f"{RACINE}/etat_chevaux_corde.json", {})
+    etat_dernier_rang = charger_json(f"{RACINE}/etat_dernier_rang.json", {})
     etat_pause = charger_json(f"{RACINE}/etat_pause.json", {})
     constantes = charger_json(f"{RACINE}/constantes.json", {})
     offset_discipline = constantes.get("offset_discipline_monte_moins_attele_ms_km", -400)
@@ -158,6 +159,7 @@ def main():
     bankroll_2sur4, chemin_bankroll_2sur4 = get_bankroll(RACINE, "2sur4")
     bankroll_trio, chemin_bankroll_trio = get_bankroll(RACINE, "trio")
     bankroll_multi, chemin_bankroll_multi = get_bankroll(RACINE, "multi")
+    bankroll_2favori, chemin_bankroll_2favori = get_bankroll(RACINE, "2favori")
 
     chemin_log = f"{RACINE}/paris_virtuels.csv"
     if not os.path.exists(chemin_log):
@@ -200,6 +202,7 @@ def main():
         )
         top4_reel_str = "|".join(top4_reel_noms)
 
+        # --- 1. Mise a jour de l'etat glissant pour TOUS les partants ---
         valides = []
         for p in participants:
             incident = p.get("incident", "") or ""
@@ -234,6 +237,11 @@ def main():
             driver = p.get("driver") or p.get("entraineur")
             if driver:
                 maj_driver(etat_drivers, driver, gagnant)
+
+            # --- Mise a jour du dernier rang connu, POUR TOUS LES PARTANTS ---
+            # (necessaire pour la strategie "2e favori", meme si aucun pari
+            # n'a ete place sur ce cheval aujourd'hui)
+            maj_dernier_rang(etat_dernier_rang, p.get("nom"), rang)
 
             cote = None
             rapport = p.get("dernierRapportDirect")
@@ -279,260 +287,4 @@ def main():
             if l["modele"] == "2sur4":
                 if course_combine_incomplete:
                     continue
-                chevaux_paries = l["cheval"].split("|")
-                rangs = [rang_par_nom.get(c) for c in chevaux_paries]
-                a_gagne = all(r is not None and r <= 4 for r in rangs)
-                mise = float(l.get("mise", 0) or 0)
-                gain_euros = mise * (cote_2sur4 - 1) if a_gagne and cote_2sur4 else -mise
-                l["resultat"] = "GAGNANT" if a_gagne else "PERDANT"
-                l["gain_euros"] = f"{gain_euros:.2f}"
-                l["cote"] = f"{cote_2sur4:.2f}" if a_gagne and cote_2sur4 else ""
-                bankroll_2sur4 += gain_euros
-
-                coherence, detail = "OK", ""
-                if a_gagne and (cote_2sur4 is None or gain_euros <= 0):
-                    coherence, detail = "INCOHERENT", "Gagnant mais gain <= 0 ou cote manquante"
-                if not a_gagne and gain_euros != -mise:
-                    coherence, detail = "INCOHERENT", "Perdant mais gain != -mise"
-
-                ecrire_audit({
-                    "race_id": race_id, "modele": "2sur4",
-                    "chevaux_paries": "|".join(chevaux_paries),
-                    "rangs_arrivee_chevaux_paries": "|".join(str(r) for r in rangs),
-                    "top4_reel": top4_reel_str, "combinaison_rapport_brute": "",
-                    "cote_utilisee": cote_2sur4 or "", "gain_calcule": f"{gain_euros:.2f}",
-                    "resultat": l["resultat"], "coherence_verifiee": coherence,
-                    "detail_incoherence": detail, "date_verif": datetime.now(timezone.utc).isoformat(),
-                })
-
-                if not etat_pause.get("2sur4", False):
-                    emoji = "✅" if a_gagne else "❌"
-                    lignes_message.append(f"{emoji} [2sur4] {' + '.join(chevaux_paries)} (mise {mise:.2f}€) — gain {gain_euros:+.2f}€ | bankroll 2sur4 : {bankroll_2sur4:.2f}€")
-                continue
-
-            if l["modele"] == "trio":
-                if course_combine_incomplete:
-                    continue
-                chevaux_paries = l["cheval"].split("|")
-                rangs = [rang_par_nom.get(c) for c in chevaux_paries]
-                a_gagne_independant = set(rangs) == {1, 2, 3}
-
-                if trio_reel_ensemble is None:
-                    ecrire_audit({
-                        "race_id": race_id, "modele": "trio",
-                        "chevaux_paries": "|".join(chevaux_paries),
-                        "rangs_arrivee_chevaux_paries": "|".join(str(r) for r in rangs),
-                        "top4_reel": top4_reel_str, "combinaison_rapport_brute": trio_combinaison_brute or "NP_ou_indisponible",
-                        "cote_utilisee": "", "gain_calcule": "", "resultat": "NON_RESOLU_NP",
-                        "coherence_verifiee": "IGNORE", "detail_incoherence": "Rapport TRIO avec NP ou indisponible",
-                        "date_verif": datetime.now(timezone.utc).isoformat(),
-                    })
-                    continue
-
-                try:
-                    ensemble_parie = frozenset(int(next(p.get("numPmu") for p in participants if p.get("nom") == c)) for c in chevaux_paries)
-                except Exception:
-                    continue
-                a_gagne = ensemble_parie == trio_reel_ensemble
-                mise = float(l.get("mise", 0) or 0)
-                gain_euros = mise * (trio_reel_cote - 1) if a_gagne else -mise
-                l["resultat"] = "GAGNANT" if a_gagne else "PERDANT"
-                l["gain_euros"] = f"{gain_euros:.2f}"
-                l["cote"] = f"{trio_reel_cote:.2f}" if a_gagne else ""
-                bankroll_trio += gain_euros
-
-                coherence, detail = "OK", ""
-                if a_gagne != a_gagne_independant:
-                    coherence = "INCOHERENT"
-                    detail = f"Rapport dit {a_gagne}, verite terrain (rangs) dit {a_gagne_independant}"
-
-                ecrire_audit({
-                    "race_id": race_id, "modele": "trio",
-                    "chevaux_paries": "|".join(chevaux_paries),
-                    "rangs_arrivee_chevaux_paries": "|".join(str(r) for r in rangs),
-                    "top4_reel": top4_reel_str, "combinaison_rapport_brute": trio_combinaison_brute or "",
-                    "cote_utilisee": trio_reel_cote or "", "gain_calcule": f"{gain_euros:.2f}",
-                    "resultat": l["resultat"], "coherence_verifiee": coherence,
-                    "detail_incoherence": detail, "date_verif": datetime.now(timezone.utc).isoformat(),
-                })
-
-                if not etat_pause.get("trio", False):
-                    emoji = "✅" if a_gagne else "❌"
-                    lignes_message.append(f"{emoji} [trio] {' + '.join(chevaux_paries)} (mise {mise:.2f}€) — gain {gain_euros:+.2f}€ | bankroll trio : {bankroll_trio:.2f}€")
-                continue
-
-            if l["modele"] == "multi":
-                if course_combine_incomplete:
-                    continue
-                type_pari_multi = l.get("cote", "MULTI")
-                chevaux_paries = l["cheval"].split("|")
-                rangs = [rang_par_nom.get(c) for c in chevaux_paries]
-                a_gagne_independant = set(rangs) == {1, 2, 3, 4}
-
-                try:
-                    ensemble_parie = frozenset(int(next(p.get("numPmu") for p in participants if p.get("nom") == c)) for c in chevaux_paries)
-                except Exception:
-                    continue
-                a_gagne = ensemble_parie == top4_reel
-                cote_multi = extraire_cote_multi(rapports_data, type_pari_multi) if rapports_data else None
-                mise = float(l.get("mise", 0) or 0)
-                gain_euros = mise * (cote_multi - 1) if a_gagne and cote_multi else -mise
-                l["resultat"] = "GAGNANT" if a_gagne else "PERDANT"
-                l["gain_euros"] = f"{gain_euros:.2f}"
-                l["cote"] = f"{cote_multi:.2f}" if a_gagne and cote_multi else ""
-                bankroll_multi += gain_euros
-
-                coherence, detail = "OK", ""
-                if a_gagne != a_gagne_independant:
-                    coherence = "INCOHERENT"
-                    detail = f"Calcul principal dit {a_gagne}, verite terrain (rangs) dit {a_gagne_independant}"
-
-                ecrire_audit({
-                    "race_id": race_id, "modele": type_pari_multi.lower(),
-                    "chevaux_paries": "|".join(chevaux_paries),
-                    "rangs_arrivee_chevaux_paries": "|".join(str(r) for r in rangs),
-                    "top4_reel": top4_reel_str, "combinaison_rapport_brute": "",
-                    "cote_utilisee": cote_multi or "", "gain_calcule": f"{gain_euros:.2f}",
-                    "resultat": l["resultat"], "coherence_verifiee": coherence,
-                    "detail_incoherence": detail, "date_verif": datetime.now(timezone.utc).isoformat(),
-                })
-
-                if not etat_pause.get("multi", False):
-                    emoji = "✅" if a_gagne else "❌"
-                    lignes_message.append(f"{emoji} [{type_pari_multi.lower()}] {' + '.join(chevaux_paries)} (mise {mise:.2f}€) — gain {gain_euros:+.2f}€ | bankroll multi : {bankroll_multi:.2f}€")
-                continue
-
-            cheval_parie = l["cheval"]
-            participant_correspondant = next((p for p in participants if p.get("nom") == cheval_parie), None)
-            if participant_correspondant is None:
-                continue
-            rang_reel = rang_par_nom.get(cheval_parie)
-
-            if l["modele"] == "place":
-                if course_combine_incomplete:
-                    continue
-                num_pmu = participant_correspondant.get("numPmu")
-                mise = float(l.get("mise", 0) or 0)
-                cote_place_reelle = rapports_place.get(num_pmu) if rapports_place else None
-                a_place = cote_place_reelle is not None
-                gain_euros = mise * (cote_place_reelle - 1) if a_place else -mise
-                l["resultat"] = "PLACE" if a_place else "NON_PLACE"
-                l["gain_euros"] = f"{gain_euros:.2f}"
-                l["cote"] = f"{cote_place_reelle:.2f}" if a_place else ""
-                bankroll_place += gain_euros
-
-                coherence, detail = "OK", ""
-                if a_place and rang_reel is not None and rang_reel > 4:
-                    coherence, detail = "INCOHERENT", f"Marque PLACE mais rang reel = {rang_reel} (>4, impossible)"
-                elif not a_place and rang_reel is not None and rang_reel <= 2:
-                    coherence, detail = "INCOHERENT", f"Marque NON_PLACE mais rang reel = {rang_reel} (<=2, toujours placable)"
-
-                ecrire_audit({
-                    "race_id": race_id, "modele": "place",
-                    "chevaux_paries": cheval_parie,
-                    "rangs_arrivee_chevaux_paries": str(rang_reel),
-                    "top4_reel": top4_reel_str, "combinaison_rapport_brute": "",
-                    "cote_utilisee": cote_place_reelle or "", "gain_calcule": f"{gain_euros:.2f}",
-                    "resultat": l["resultat"], "coherence_verifiee": coherence,
-                    "detail_incoherence": detail, "date_verif": datetime.now(timezone.utc).isoformat(),
-                })
-
-                if not etat_pause.get("place", False):
-                    emoji = "✅" if a_place else "❌"
-                    lignes_message.append(f"{emoji} [place] {cheval_parie} (mise {mise:.2f}€) — gain {gain_euros:+.2f}€ | bankroll place : {bankroll_place:.2f}€")
-                continue
-
-            gagnant = rang_reel == 1
-            cote = float(l["cote"])
-            mise = float(l.get("mise", 0) or 0)
-
-            gain_euros = mise * (cote - 1) if gagnant else -mise
-            l["resultat"] = "GAGNANT" if gagnant else "PERDANT"
-            l["gain_euros"] = f"{gain_euros:.2f}"
-
-            if l["modele"] == "v1.4":
-                bankroll_v14 += gain_euros
-                bankroll_apres = bankroll_v14
-                cle_pause = "v14"
-            elif l["modele"] == "v1.5":
-                bankroll_v15 += gain_euros
-                bankroll_apres = bankroll_v15
-                cle_pause = "v15"
-            elif l["modele"] == "v1.8":
-                bankroll_v18 += gain_euros
-                bankroll_apres = bankroll_v18
-                cle_pause = "v18"
-            elif l["modele"] == "v1.10":
-                bankroll_v110 += gain_euros
-                bankroll_apres = bankroll_v110
-                cle_pause = "v110"
-            else:
-                bankroll_apres = None
-                cle_pause = None
-
-            coherence, detail = "OK", ""
-            if gagnant and rang_reel != 1:
-                coherence, detail = "INCOHERENT", "Marque gagnant mais rang reel != 1"
-            if not gagnant and rang_reel == 1:
-                coherence, detail = "INCOHERENT", "Marque perdant mais rang reel == 1"
-
-            ecrire_audit({
-                "race_id": race_id, "modele": l["modele"],
-                "chevaux_paries": cheval_parie,
-                "rangs_arrivee_chevaux_paries": str(rang_reel),
-                "top4_reel": top4_reel_str, "combinaison_rapport_brute": "",
-                "cote_utilisee": cote, "gain_calcule": f"{gain_euros:.2f}",
-                "resultat": l["resultat"], "coherence_verifiee": coherence,
-                "detail_incoherence": detail, "date_verif": datetime.now(timezone.utc).isoformat(),
-            })
-
-            if not (cle_pause and etat_pause.get(cle_pause, False)):
-                emoji = "✅" if gagnant else "❌"
-                lignes_message.append(
-                    f"{emoji} [{l['modele']}] {cheval_parie} (cote {cote:.1f}, mise {mise:.2f}€) "
-                    f"— gain {gain_euros:+.2f}€ | bankroll {l['modele']} : {bankroll_apres:.2f}€"
-                )
-
-        if lignes_message:
-            msg = f"🏁 <b>Resultat course {race_id}</b>\n\n" + "\n".join(lignes_message)
-            envoyer_telegram(msg)
-
-        if not course_combine_incomplete:
-            courses_traitees_ce_run.append(race_id)
-
-    with open(chemin_log, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=[
-            "race_id", "modele", "cheval", "cote", "ev", "mise",
-            "date_detection", "resultat", "gain_euros",
-        ])
-        writer.writeheader()
-        for l in lignes:
-            writer.writerow(l)
-
-    mettre_a_jour_bankroll(chemin_bankroll_v14, bankroll_v14)
-    mettre_a_jour_bankroll(chemin_bankroll_v15, bankroll_v15)
-    mettre_a_jour_bankroll(chemin_bankroll_v18, bankroll_v18)
-    mettre_a_jour_bankroll(chemin_bankroll_v110, bankroll_v110)
-    mettre_a_jour_bankroll(chemin_bankroll_place, bankroll_place)
-    mettre_a_jour_bankroll(chemin_bankroll_2sur4, bankroll_2sur4)
-    mettre_a_jour_bankroll(chemin_bankroll_trio, bankroll_trio)
-    mettre_a_jour_bankroll(chemin_bankroll_multi, bankroll_multi)
-
-    sauvegarder_json(f"{RACINE}/etat_drivers.json", etat_drivers)
-    sauvegarder_json(f"{RACINE}/etat_hippodromes.json", etat_hippodromes)
-    sauvegarder_json(f"{RACINE}/etat_chevaux.json", etat_chevaux)
-    sauvegarder_json(f"{RACINE}/etat_chevaux_corde.json", etat_chevaux_corde)
-
-    print(f"{len(courses_traitees_ce_run)} courses traitees dans ce run.")
-    print(f"v1.4:{bankroll_v14:.2f} v1.5:{bankroll_v15:.2f} v1.8:{bankroll_v18:.2f} v1.10:{bankroll_v110:.2f} place:{bankroll_place:.2f} 2sur4:{bankroll_2sur4:.2f} trio:{bankroll_trio:.2f} multi:{bankroll_multi:.2f}")
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        import traceback
-        detail = traceback.format_exc()[-500:]
-        detail_echappe = detail.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        envoyer_telegram(f"🔴 <b>Erreur dans verifier_resultats.py</b>\n\n{e}\n\n<code>{detail_echappe}</code>")
-        raise
+                chevaux_
