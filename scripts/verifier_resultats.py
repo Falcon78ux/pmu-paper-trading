@@ -2,13 +2,10 @@
 =============================================================================
 VERIFIER_RESULTATS.PY - Compare aux resultats reels, met a jour l'historique
 =============================================================================
-NOUVEAU : journal_audit.csv - journal d'audit EXHAUSTIF, independant de
-Telegram. Pour CHAQUE pari resolu (les 8 modeles), enregistre le detail
-complet (rangs d'arrivee reels des chevaux paries) ET un AUTO-CONTROLE :
-le script recalcule le resultat par une methode independante (directement
-depuis rang_arrivee, sans passer par le parsing des rapports) et compare
-au calcul principal. Toute divergence est flaguee "INCOHERENT" - objectif :
-detecter un bug de parsing automatiquement, sans verification manuelle.
+Journal d'audit exhaustif (journal_audit.csv) + respect de etat_pause.json
+UNIQUEMENT pour la notification Telegram (jamais pour le calcul du gain,
+la mise a jour de bankroll, ni le journal d'audit - ces trois choses
+s'executent TOUJOURS, meme en pause).
 =============================================================================
 """
 
@@ -147,6 +144,7 @@ def main():
     etat_hippodromes = charger_json(f"{RACINE}/etat_hippodromes.json", {})
     etat_chevaux = charger_json(f"{RACINE}/etat_chevaux.json", {})
     etat_chevaux_corde = charger_json(f"{RACINE}/etat_chevaux_corde.json", {})
+    etat_pause = charger_json(f"{RACINE}/etat_pause.json", {})
     constantes = charger_json(f"{RACINE}/constantes.json", {})
     offset_discipline = constantes.get("offset_discipline_monte_moins_attele_ms_km", -400)
     min_partants_sf = constantes.get("min_partants_valides_speed_figure", 6)
@@ -192,7 +190,6 @@ def main():
         hippodrome_nom = infos_course.get("hippodrome") if isinstance(infos_course, dict) else None
         corde_course = infos_course.get("corde", "") if isinstance(infos_course, dict) else ""
 
-        # --- Rang d'arrivee par nom, pour l'auto-controle (verite terrain independante) ---
         rang_par_nom = {
             p.get("nom"): p.get("ordreArrivee")
             for p in participants if p.get("ordreArrivee") is not None
@@ -203,7 +200,6 @@ def main():
         )
         top4_reel_str = "|".join(top4_reel_noms)
 
-        # --- 1. Mise a jour de l'etat glissant pour TOUS les partants (inchange) ---
         valides = []
         for p in participants:
             incident = p.get("incident", "") or ""
@@ -251,7 +247,6 @@ def main():
         if nb_partants_course > 0 and hippodrome_nom:
             maj_hippodrome(etat_hippodromes, hippodrome_nom, somme_ecart_course, nb_partants_course)
 
-        # --- 1bis. Rapports definitifs, une seule fois si besoin ---
         paris_combines_en_attente = {"place", "2sur4", "trio", "multi"}
         a_un_pari_combine_en_attente = any(
             l["race_id"] == race_id and l["modele"] in paris_combines_en_attente and l.get("resultat", "") == ""
@@ -276,7 +271,6 @@ def main():
             if p.get("ordreArrivee") is not None and p.get("ordreArrivee") <= 4
         )
 
-        # --- 2. Mise a jour de paris_virtuels.csv + journal d'audit exhaustif ---
         lignes_message = []
         for l in lignes:
             if l["race_id"] != race_id or l.get("resultat", "") != "":
@@ -295,9 +289,6 @@ def main():
                 l["cote"] = f"{cote_2sur4:.2f}" if a_gagne and cote_2sur4 else ""
                 bankroll_2sur4 += gain_euros
 
-                # Auto-controle : recalcul independant depuis rang_par_nom (deja fait ci-dessus,
-                # ce bloc EST deja la methode independante - le controle porte sur la coherence
-                # interne gain/resultat)
                 coherence, detail = "OK", ""
                 if a_gagne and (cote_2sur4 is None or gain_euros <= 0):
                     coherence, detail = "INCOHERENT", "Gagnant mais gain <= 0 ou cote manquante"
@@ -314,8 +305,9 @@ def main():
                     "detail_incoherence": detail, "date_verif": datetime.now(timezone.utc).isoformat(),
                 })
 
-                emoji = "✅" if a_gagne else "❌"
-                lignes_message.append(f"{emoji} [2sur4] {' + '.join(chevaux_paries)} (mise {mise:.2f}€) — gain {gain_euros:+.2f}€ | bankroll 2sur4 : {bankroll_2sur4:.2f}€")
+                if not etat_pause.get("2sur4", False):
+                    emoji = "✅" if a_gagne else "❌"
+                    lignes_message.append(f"{emoji} [2sur4] {' + '.join(chevaux_paries)} (mise {mise:.2f}€) — gain {gain_euros:+.2f}€ | bankroll 2sur4 : {bankroll_2sur4:.2f}€")
                 continue
 
             if l["modele"] == "trio":
@@ -323,12 +315,9 @@ def main():
                     continue
                 chevaux_paries = l["cheval"].split("|")
                 rangs = [rang_par_nom.get(c) for c in chevaux_paries]
-                # Auto-controle independant : ces 3 chevaux forment-ils EXACTEMENT {1,2,3} ?
                 a_gagne_independant = set(rangs) == {1, 2, 3}
 
                 if trio_reel_ensemble is None:
-                    # Rapport TRIO indisponible/NP - on ne peut resoudre ce pari precisement,
-                    # mais on peut quand meme journaliser le controle independant pour trace
                     ecrire_audit({
                         "race_id": race_id, "modele": "trio",
                         "chevaux_paries": "|".join(chevaux_paries),
@@ -367,8 +356,9 @@ def main():
                     "detail_incoherence": detail, "date_verif": datetime.now(timezone.utc).isoformat(),
                 })
 
-                emoji = "✅" if a_gagne else "❌"
-                lignes_message.append(f"{emoji} [trio] {' + '.join(chevaux_paries)} (mise {mise:.2f}€) — gain {gain_euros:+.2f}€ | bankroll trio : {bankroll_trio:.2f}€")
+                if not etat_pause.get("trio", False):
+                    emoji = "✅" if a_gagne else "❌"
+                    lignes_message.append(f"{emoji} [trio] {' + '.join(chevaux_paries)} (mise {mise:.2f}€) — gain {gain_euros:+.2f}€ | bankroll trio : {bankroll_trio:.2f}€")
                 continue
 
             if l["modele"] == "multi":
@@ -407,8 +397,9 @@ def main():
                     "detail_incoherence": detail, "date_verif": datetime.now(timezone.utc).isoformat(),
                 })
 
-                emoji = "✅" if a_gagne else "❌"
-                lignes_message.append(f"{emoji} [{type_pari_multi.lower()}] {' + '.join(chevaux_paries)} (mise {mise:.2f}€) — gain {gain_euros:+.2f}€ | bankroll multi : {bankroll_multi:.2f}€")
+                if not etat_pause.get("multi", False):
+                    emoji = "✅" if a_gagne else "❌"
+                    lignes_message.append(f"{emoji} [{type_pari_multi.lower()}] {' + '.join(chevaux_paries)} (mise {mise:.2f}€) — gain {gain_euros:+.2f}€ | bankroll multi : {bankroll_multi:.2f}€")
                 continue
 
             cheval_parie = l["cheval"]
@@ -430,9 +421,6 @@ def main():
                 l["cote"] = f"{cote_place_reelle:.2f}" if a_place else ""
                 bankroll_place += gain_euros
 
-                # Auto-controle : impossible d'etre "PLACE" si rang > 4 (aucune regle PMU ne
-                # place au-dela de 4), et impossible d'etre "NON_PLACE" si rang <= 2 (toujours
-                # placable quelle que soit la regle 4-7 ou 8+ partants)
                 coherence, detail = "OK", ""
                 if a_place and rang_reel is not None and rang_reel > 4:
                     coherence, detail = "INCOHERENT", f"Marque PLACE mais rang reel = {rang_reel} (>4, impossible)"
@@ -449,11 +437,11 @@ def main():
                     "detail_incoherence": detail, "date_verif": datetime.now(timezone.utc).isoformat(),
                 })
 
-                emoji = "✅" if a_place else "❌"
-                lignes_message.append(f"{emoji} [place] {cheval_parie} (mise {mise:.2f}€) — gain {gain_euros:+.2f}€ | bankroll place : {bankroll_place:.2f}€")
+                if not etat_pause.get("place", False):
+                    emoji = "✅" if a_place else "❌"
+                    lignes_message.append(f"{emoji} [place] {cheval_parie} (mise {mise:.2f}€) — gain {gain_euros:+.2f}€ | bankroll place : {bankroll_place:.2f}€")
                 continue
 
-            # --- Modeles gagnant classiques (v1.4/v1.5/v1.8/v1.10) ---
             gagnant = rang_reel == 1
             cote = float(l["cote"])
             mise = float(l.get("mise", 0) or 0)
@@ -465,17 +453,22 @@ def main():
             if l["modele"] == "v1.4":
                 bankroll_v14 += gain_euros
                 bankroll_apres = bankroll_v14
+                cle_pause = "v14"
             elif l["modele"] == "v1.5":
                 bankroll_v15 += gain_euros
                 bankroll_apres = bankroll_v15
+                cle_pause = "v15"
             elif l["modele"] == "v1.8":
                 bankroll_v18 += gain_euros
                 bankroll_apres = bankroll_v18
+                cle_pause = "v18"
             elif l["modele"] == "v1.10":
                 bankroll_v110 += gain_euros
                 bankroll_apres = bankroll_v110
+                cle_pause = "v110"
             else:
                 bankroll_apres = None
+                cle_pause = None
 
             coherence, detail = "OK", ""
             if gagnant and rang_reel != 1:
@@ -493,11 +486,12 @@ def main():
                 "detail_incoherence": detail, "date_verif": datetime.now(timezone.utc).isoformat(),
             })
 
-            emoji = "✅" if gagnant else "❌"
-            lignes_message.append(
-                f"{emoji} [{l['modele']}] {cheval_parie} (cote {cote:.1f}, mise {mise:.2f}€) "
-                f"— gain {gain_euros:+.2f}€ | bankroll {l['modele']} : {bankroll_apres:.2f}€"
-            )
+            if not (cle_pause and etat_pause.get(cle_pause, False)):
+                emoji = "✅" if gagnant else "❌"
+                lignes_message.append(
+                    f"{emoji} [{l['modele']}] {cheval_parie} (cote {cote:.1f}, mise {mise:.2f}€) "
+                    f"— gain {gain_euros:+.2f}€ | bankroll {l['modele']} : {bankroll_apres:.2f}€"
+                )
 
         if lignes_message:
             msg = f"🏁 <b>Resultat course {race_id}</b>\n\n" + "\n".join(lignes_message)
