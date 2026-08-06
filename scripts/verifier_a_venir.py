@@ -2,10 +2,14 @@
 =============================================================================
 VERIFIER_A_VENIR.PY - Detecte les value bets avant chaque course
 =============================================================================
-8 strategies en parallele. Respecte etat_pause.json UNIQUEMENT pour la
-construction du message Telegram - le calcul, le pari et le log dans
-paris_virtuels.csv sont TOUJOURS effectues, meme pour une strategie en
-pause. Seule la notification est coupee.
+9 strategies en parallele : v1.4, v1.5, v1.8, v1.10, DEUXIEME FAVORI
+(EV>seuil, mise Kelly), PLACE, 2SUR4, TRIO, MULTI/MINI_MULTI (top pick,
+mise fixe).
+
+DEUXIEME FAVORI : logique differente des autres - necessite de classer
+TOUS les partants par cote pour identifier le 1er et 2e favori DU JOUR,
+puis de verifier si le 1er favori etait NON PLACE (rang>3) a sa
+DERNIERE sortie (etat_dernier_rang.json, nouveau fichier d'etat).
 =============================================================================
 """
 
@@ -25,8 +29,8 @@ from commun import (
     get_biais_hippodrome, get_speed_figure_avant_course, get_ecart_corde,
     extraire_cote_directe, extraire_deferre_4_pieds, extraire_age,
     extraire_indicateur_femelle, extraire_taux_victoire_carriere,
-    get_bankroll, calculer_mise, calculer_mise_v18, calculer_mise_v110,
-    calculer_mise_place,
+    get_dernier_rang, get_bankroll, calculer_mise, calculer_mise_v18,
+    calculer_mise_v110, calculer_mise_place, calculer_mise_2favori,
 )
 
 RACINE = os.path.join(os.path.dirname(__file__), "..")
@@ -77,12 +81,14 @@ def main():
     etat_hippodromes = charger_json(f"{RACINE}/etat_hippodromes.json", {})
     etat_chevaux = charger_json(f"{RACINE}/etat_chevaux.json", {})
     etat_chevaux_corde = charger_json(f"{RACINE}/etat_chevaux_corde.json", {})
+    etat_dernier_rang = charger_json(f"{RACINE}/etat_dernier_rang.json", {})
     etat_pause = charger_json(f"{RACINE}/etat_pause.json", {})
     modele_v14 = charger_json(f"{RACINE}/modele_v14.json")
     modele_v15 = charger_json(f"{RACINE}/modele_v15.json")
     modele_v18 = charger_json(f"{RACINE}/modele_v18_production.json")
     modele_v110 = charger_json(f"{RACINE}/modele_v110_production.json")
     modele_place = charger_json(f"{RACINE}/modele_place_v1_production.json")
+    modele_2favori = charger_json(f"{RACINE}/modele_deuxieme_favori_v2_production.json")
     courses_notifiees = charger_json(f"{RACINE}/courses_notifiees.json", {})
 
     bankroll_v14, chemin_bankroll_v14 = get_bankroll(RACINE, "v14")
@@ -93,6 +99,7 @@ def main():
     bankroll_2sur4, chemin_bankroll_2sur4 = get_bankroll(RACINE, "2sur4")
     bankroll_trio, chemin_bankroll_trio = get_bankroll(RACINE, "trio")
     bankroll_multi, chemin_bankroll_multi = get_bankroll(RACINE, "multi")
+    bankroll_2favori, chemin_bankroll_2favori = get_bankroll(RACINE, "2favori")
 
     try:
         courses = recuperer_programme_du_jour(date_str)
@@ -138,6 +145,9 @@ def main():
         value_bets_v110 = []
         candidats_place = []
 
+        # --- Pour le 2e favori : classement de tous les partants par cote ---
+        partants_avec_cote = []
+
         for p in participants:
             if p.get("statut") != "PARTANT":
                 continue
@@ -160,6 +170,8 @@ def main():
 
             if cote is None or cote <= 1:
                 continue
+
+            partants_avec_cote.append((cheval, cote))
 
             log_cote = math.log(cote)
 
@@ -257,6 +269,7 @@ def main():
                 "date_verif": maintenant.isoformat(),
             })
 
+        # --- PLACE : top 1 ---
         value_bets_place = []
         if candidats_place:
             meilleur = max(candidats_place, key=lambda x: x[1])
@@ -264,6 +277,7 @@ def main():
             mise_place = calculer_mise_place()
             value_bets_place.append((cheval_place, proba_place_choisi, mise_place))
 
+        # --- 2 SUR 4 : top 2 ---
         value_bets_deux_sur_quatre = []
         if len(candidats_place) >= 2:
             top2 = sorted(candidats_place, key=lambda x: x[1], reverse=True)[:2]
@@ -271,6 +285,7 @@ def main():
             mise_2sur4 = calculer_mise_place()
             value_bets_deux_sur_quatre.append((chevaux_choisis, mise_2sur4))
 
+        # --- TRIO (non ordonne) : top 3 ---
         value_bets_trio = []
         if len(candidats_place) >= 3:
             top3 = sorted(candidats_place, key=lambda x: x[1], reverse=True)[:3]
@@ -278,6 +293,7 @@ def main():
             mise_trio = calculer_mise_place()
             value_bets_trio.append((chevaux_choisis_trio, mise_trio))
 
+        # --- MULTI ou MINI_MULTI : top 4 ---
         value_bets_multi = []
         type_multi = None
         if nb_partants_course >= 14:
@@ -290,8 +306,41 @@ def main():
             mise_multi = calculer_mise_place()
             value_bets_multi.append((chevaux_choisis_multi, mise_multi, type_multi))
 
-        # --- Construction du message : respecte etat_pause.json (notification uniquement) ---
-        # Le LOG (log_paris.append) est TOUJOURS effectue plus bas, meme en pause.
+        # --- DEUXIEME FAVORI : identifie le 1er et 2e favori, verifie la condition ---
+        value_bets_2favori = []
+        if len(partants_avec_cote) >= 2:
+            partants_tries = sorted(partants_avec_cote, key=lambda x: x[1])
+            cheval_favori, cote_favori = partants_tries[0]
+            cheval_2favori, cote_2favori = partants_tries[1]
+
+            dernier_rang_favori = get_dernier_rang(etat_dernier_rang, cheval_favori)
+            favori_non_place_avant = dernier_rang_favori is not None and dernier_rang_favori > 3
+
+            if favori_non_place_avant:
+                p_2favori = next((p for p in participants if p.get("nom") == cheval_2favori), None)
+                if p_2favori is not None:
+                    driver_2fav = p_2favori.get("driver") or p_2favori.get("entraineur")
+                    sf_2fav = get_speed_figure_avant_course(etat_chevaux, cheval_2favori)
+                    driver_forme_2fav = get_driver_forme(etat_drivers, driver_2fav)
+                    biais_hippo_2fav = get_biais_hippodrome(etat_hippodromes, course["hippodrome"])
+                    log_cote_2fav = math.log(cote_2favori)
+
+                    if sf_2fav is not None and driver_forme_2fav is not None and biais_hippo_2fav is not None:
+                        proba_2favori = calculer_proba(
+                            {
+                                "speed_figure_avant_course": sf_2fav, "log_cote": log_cote_2fav,
+                                "driver_forme": driver_forme_2fav, "biais_hippodrome": biais_hippo_2fav,
+                            },
+                            modele_2favori,
+                        )
+                        if proba_2favori is not None:
+                            ev_2favori = proba_2favori * cote_2favori - 1
+                            if ev_2favori > SEUIL_EV:
+                                mise_2favori = calculer_mise_2favori(proba_2favori, cote_2favori, bankroll_2favori)
+                                if mise_2favori > 0:
+                                    value_bets_2favori.append((cheval_2favori, cote_2favori, proba_2favori, ev_2favori, mise_2favori))
+
+        # --- Construction du message : respecte etat_pause.json ---
         sections_msg = []
         if value_bets_v14 and not etat_pause.get("v14", False):
             bloc = f"<b>Modele v1.4</b> (bankroll : {bankroll_v14:.0f}€) :\n"
@@ -335,6 +384,11 @@ def main():
             for chevaux, mise, type_pari in value_bets_multi:
                 bloc += f"• {' + '.join(chevaux)} — <b>mise {mise:.2f}€</b>\n"
             sections_msg.append(bloc)
+        if value_bets_2favori and not etat_pause.get("2favori", False):
+            bloc = f"<b>Modele 2E FAVORI</b> (bankroll : {bankroll_2favori:.0f}€) :\n"
+            for cheval, cote, proba, ev, mise in value_bets_2favori:
+                bloc += f"• {cheval} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>\n"
+            sections_msg.append(bloc)
 
         if sections_msg:
             msg = f"🐎 <b>Course {course['hippodrome']} R{course['num_reunion']}C{course['num_course']}</b>\n"
@@ -342,7 +396,7 @@ def main():
             msg += "\n".join(sections_msg)
             envoyer_telegram(msg)
 
-        # --- Log TOUJOURS effectue, quelle que soit la pause (le pari reste reel) ---
+        # --- Log TOUJOURS effectue, quelle que soit la pause ---
         for cheval, cote, proba, ev, mise in value_bets_v14:
             log_paris.append({"race_id": race_id, "modele": "v1.4", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
         for cheval, cote, proba, ev, mise in value_bets_v15:
@@ -359,6 +413,8 @@ def main():
             log_paris.append({"race_id": race_id, "modele": "trio", "cheval": "|".join(chevaux), "cote": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
         for chevaux, mise, type_pari in value_bets_multi:
             log_paris.append({"race_id": race_id, "modele": "multi", "cheval": "|".join(chevaux), "cote": type_pari, "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
+        for cheval, cote, proba, ev, mise in value_bets_2favori:
+            log_paris.append({"race_id": race_id, "modele": "2favori", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
 
         courses_notifiees[race_id] = {
             "date_notif": maintenant.isoformat(),
