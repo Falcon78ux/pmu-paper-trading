@@ -12,11 +12,9 @@ le chat est affectee.
 
 Delai de reponse : jusqu'a ~15 minutes (rythme du cron GitHub Actions).
 
-NOUVEAU : /confiance - estimation bayesienne combinee (backtest + direct),
-ponderee par la taille de chaque echantillon. Reponse a la question :
-"pourquoi attendre que le bruit direct passe alors qu'on a deja un
-backtest tres solide ?" - au lieu d'ignorer le backtest, on le combine
-mathematiquement avec le direct, avec un poids proportionnel a n.
+9 modeles maintenant : v14, v15, v18, v110, place, 2sur4, trio, multi,
+2favori (nouveau - deuxieme favori du jour, deploye avec le modele
+dedie v2, coefficients bases sur 6054 lignes d'entrainement).
 =============================================================================
 """
 
@@ -33,15 +31,15 @@ from commun import charger_json, sauvegarder_json, envoyer_telegram
 
 RACINE = os.path.join(os.path.dirname(__file__), "..")
 
-MODELES = ["v14", "v15", "v18", "v110", "place", "2sur4", "trio", "multi"]
+MODELES = ["v14", "v15", "v18", "v110", "place", "2sur4", "trio", "multi", "2favori"]
 NOMS_AFFICHAGE = {
     "v14": "v1.4", "v15": "v1.5", "v18": "v1.8", "v110": "v1.10",
     "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
+    "2favori": "2favori",
 }
 
-# Reference backtest (walk-forward, flat-bet) pour chaque modele - source :
-# checkpoints du projet + test de significativite specifique du 6 aout
-# pour v1.4/v1.5 (jamais documente separement avant cette date).
+# Reference backtest (walk-forward, flat-bet) pour chaque modele.
+# 2favori : modele dedie v2 (probabilite individuelle), 2645 paris.
 REFERENCE_BACKTEST = {
     "v14": {"n": 30984, "roi": 0.1075},
     "v15": {"n": 31756, "roi": 0.1391},
@@ -51,11 +49,12 @@ REFERENCE_BACKTEST = {
     "2sur4": {"n": 10312, "roi": 0.838},
     "trio": {"n": 14993, "roi": 1.358},
     "multi": {"n": 10206, "roi": 4.60},
+    "2favori": {"n": 2645, "roi": 0.2501},
 }
 
 TEXTE_AIDE = (
     "<b>Commandes disponibles</b>\n\n"
-    "/bankroll — bankrolls actuelles des 8 strategies\n"
+    "/bankroll — bankrolls actuelles des 9 strategies\n"
     "/bilan — bilan du jour (gain, perte, ROI, nb paris)\n"
     "/bilan JJ/MM/AAAA — bilan d'une date precise\n"
     "/bilan cumule — bilan depuis le debut\n"
