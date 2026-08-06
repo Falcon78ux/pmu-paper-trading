@@ -2,7 +2,7 @@
 =============================================================================
 KEEP_ALIVE.PY - Battement de coeur quotidien AVEC statistiques de performance
 =============================================================================
-8 modeles : v1.4, v1.5, v1.8, v1.10, place, 2sur4, trio, multi.
+9 modeles : v1.4, v1.5, v1.8, v1.10, place, 2sur4, trio, multi, 2favori.
 =============================================================================
 """
 
@@ -64,12 +64,13 @@ def main():
 
         bankrolls = {
             nom: charger_json(f"{RACINE}/bankroll_{nom}.json", {}).get("bankroll")
-            for nom in ["v14", "v15", "v18", "v110", "place", "2sur4", "trio", "multi"]
+            for nom in ["v14", "v15", "v18", "v110", "place", "2sur4", "trio", "multi", "2favori"]
         }
 
         noms_affichage = {
             "v14": "v1.4", "v15": "v1.5", "v18": "v1.8", "v110": "v1.10",
             "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
+            "2favori": "2favori",
         }
 
         etat_drivers = charger_json(f"{RACINE}/etat_drivers.json", {})
