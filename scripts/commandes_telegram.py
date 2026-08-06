@@ -11,6 +11,9 @@ en arriere-plan, quelle que soit la commande - seule la visibilite dans
 le chat est affectee.
 
 Delai de reponse : jusqu'a ~15 minutes (rythme du cron GitHub Actions).
+
+CORRECTION : /bilan accepte maintenant n'importe quel format de date
+(JJMMAAAA, JJ/MM/AAAA, JJ-MM-AAAA...) - ne garde que les chiffres.
 =============================================================================
 """
 
@@ -36,7 +39,7 @@ TEXTE_AIDE = (
     "<b>Commandes disponibles</b>\n\n"
     "/bankroll — bankrolls actuelles des 8 strategies\n"
     "/bilan — bilan du jour (gain, perte, ROI, nb paris)\n"
-    "/bilan JJMMAAAA — bilan d'une date precise\n"
+    "/bilan JJ/MM/AAAA — bilan d'une date precise\n"
     "/bilan cumule — bilan depuis le debut\n"
     "/pause [strategie|tout] — coupe les notifications (le pari continue en arriere-plan)\n"
     "/reprendre [strategie|tout] — reactive les notifications\n"
@@ -99,6 +102,15 @@ def calculer_stats_modele(lignes_csv, nom_modele):
     return {"nb": nb, "taux": gagnants / nb if nb else 0, "mise": mise_totale, "gain": gain_total, "roi": roi}
 
 
+def normaliser_date(argument):
+    """Accepte JJMMAAAA, JJ/MM/AAAA, JJ-MM-AAAA, etc. - ne garde que les
+    chiffres et verifie qu'on obtient bien 8 caracteres."""
+    chiffres = "".join(c for c in argument if c.isdigit())
+    if len(chiffres) == 8:
+        return chiffres
+    return None
+
+
 def traiter_bilan(argument):
     chemin_log = f"{RACINE}/paris_virtuels.csv"
     if not os.path.exists(chemin_log):
@@ -107,12 +119,14 @@ def traiter_bilan(argument):
         lignes_csv = list(csv.DictReader(f))
 
     aujourd_hui = datetime.now(timezone.utc).strftime("%d%m%Y")
+    date_normalisee = normaliser_date(argument) if argument and argument != "cumule" else None
+
     if argument == "cumule":
         lignes_filtrees = lignes_csv
         titre = "Bilan cumule (depuis le debut)"
-    elif argument and argument.isdigit() and len(argument) == 8:
-        lignes_filtrees = [l for l in lignes_csv if l.get("race_id", "").startswith(argument)]
-        titre = f"Bilan du {argument[:2]}/{argument[2:4]}/{argument[4:]}"
+    elif date_normalisee:
+        lignes_filtrees = [l for l in lignes_csv if l.get("race_id", "").startswith(date_normalisee)]
+        titre = f"Bilan du {date_normalisee[:2]}/{date_normalisee[2:4]}/{date_normalisee[4:]}"
     else:
         lignes_filtrees = [l for l in lignes_csv if l.get("race_id", "").startswith(aujourd_hui)]
         titre = "Bilan du jour"
