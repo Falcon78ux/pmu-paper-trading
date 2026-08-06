@@ -2,17 +2,10 @@
 =============================================================================
 VERIFIER_A_VENIR.PY - Detecte les value bets avant chaque course
 =============================================================================
-8 strategies en parallele : v1.4, v1.5, v1.8, v1.10 (EV>seuil, mise Kelly),
-PLACE, 2SUR4, TRIO, MULTI/MINI_MULTI (top pick, mise fixe).
-
-MULTI (14+ partants) et MINI_MULTI (10-13 partants) sont mutuellement
-exclusifs selon la taille du champ - une seule des deux s'applique par
-course.
-
-Ajout diagnostic_couverture.csv : journalise, pour CHAQUE course de trot
-traitee (pas seulement celles avec un pari), combien de partants avaient
-toutes les donnees necessaires - pour comprendre pourquoi certaines
-courses ne generent aucun pari combine (place/2sur4/trio/multi).
+8 strategies en parallele. Respecte etat_pause.json UNIQUEMENT pour la
+construction du message Telegram - le calcul, le pari et le log dans
+paris_virtuels.csv sont TOUJOURS effectues, meme pour une strategie en
+pause. Seule la notification est coupee.
 =============================================================================
 """
 
@@ -20,7 +13,7 @@ import sys
 import os
 import json
 import math
-import csv as csv_module  # eviter collision avec le csv importe plus bas dans main()
+import csv as csv_module
 from datetime import datetime, timezone, timedelta
 
 import requests
@@ -84,6 +77,7 @@ def main():
     etat_hippodromes = charger_json(f"{RACINE}/etat_hippodromes.json", {})
     etat_chevaux = charger_json(f"{RACINE}/etat_chevaux.json", {})
     etat_chevaux_corde = charger_json(f"{RACINE}/etat_chevaux_corde.json", {})
+    etat_pause = charger_json(f"{RACINE}/etat_pause.json", {})
     modele_v14 = charger_json(f"{RACINE}/modele_v14.json")
     modele_v15 = charger_json(f"{RACINE}/modele_v15.json")
     modele_v18 = charger_json(f"{RACINE}/modele_v18_production.json")
@@ -133,7 +127,6 @@ def main():
 
         nb_partants_course = sum(1 for p in participants if p.get("statut") == "PARTANT")
 
-        # --- Diagnostic de couverture (pourquoi certaines courses n'ont aucun pari combine) ---
         diag = {
             "sans_cote": 0, "sans_sf": 0, "sans_driver_forme": 0,
             "sans_biais_hippo": 0, "sans_ecart_corde": 0, "valides_pour_place": 0,
@@ -143,7 +136,7 @@ def main():
         value_bets_v15 = []
         value_bets_v18 = []
         value_bets_v110 = []
-        candidats_place = []  # tous les partants avec une proba_place valide
+        candidats_place = []
 
         for p in participants:
             if p.get("statut") != "PARTANT":
@@ -264,7 +257,6 @@ def main():
                 "date_verif": maintenant.isoformat(),
             })
 
-        # --- PLACE : top 1 ---
         value_bets_place = []
         if candidats_place:
             meilleur = max(candidats_place, key=lambda x: x[1])
@@ -272,7 +264,6 @@ def main():
             mise_place = calculer_mise_place()
             value_bets_place.append((cheval_place, proba_place_choisi, mise_place))
 
-        # --- 2 SUR 4 : top 2 ---
         value_bets_deux_sur_quatre = []
         if len(candidats_place) >= 2:
             top2 = sorted(candidats_place, key=lambda x: x[1], reverse=True)[:2]
@@ -280,7 +271,6 @@ def main():
             mise_2sur4 = calculer_mise_place()
             value_bets_deux_sur_quatre.append((chevaux_choisis, mise_2sur4))
 
-        # --- TRIO (non ordonne) : top 3 ---
         value_bets_trio = []
         if len(candidats_place) >= 3:
             top3 = sorted(candidats_place, key=lambda x: x[1], reverse=True)[:3]
@@ -288,7 +278,6 @@ def main():
             mise_trio = calculer_mise_place()
             value_bets_trio.append((chevaux_choisis_trio, mise_trio))
 
-        # --- MULTI (14+ partants) ou MINI_MULTI (10-13 partants) : top 4 ---
         value_bets_multi = []
         type_multi = None
         if nb_partants_course >= 14:
@@ -301,54 +290,75 @@ def main():
             mise_multi = calculer_mise_place()
             value_bets_multi.append((chevaux_choisis_multi, mise_multi, type_multi))
 
-        if (value_bets_v14 or value_bets_v15 or value_bets_v18 or value_bets_v110
-                or value_bets_place or value_bets_deux_sur_quatre or value_bets_trio or value_bets_multi):
+        # --- Construction du message : respecte etat_pause.json (notification uniquement) ---
+        # Le LOG (log_paris.append) est TOUJOURS effectue plus bas, meme en pause.
+        sections_msg = []
+        if value_bets_v14 and not etat_pause.get("v14", False):
+            bloc = f"<b>Modele v1.4</b> (bankroll : {bankroll_v14:.0f}€) :\n"
+            for cheval, cote, proba, ev, mise in value_bets_v14:
+                bloc += f"• {cheval} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>\n"
+            sections_msg.append(bloc)
+        if value_bets_v15 and not etat_pause.get("v15", False):
+            bloc = f"<b>Modele v1.5</b> (bankroll : {bankroll_v15:.0f}€) :\n"
+            for cheval, cote, proba, ev, mise in value_bets_v15:
+                bloc += f"• {cheval} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>\n"
+            sections_msg.append(bloc)
+        if value_bets_v18 and not etat_pause.get("v18", False):
+            bloc = f"<b>Modele v1.8</b> (bankroll : {bankroll_v18:.0f}€) :\n"
+            for cheval, cote, proba, ev, mise, d4 in value_bets_v18:
+                marque_d4 = " [D4]" if d4 else ""
+                bloc += f"• {cheval}{marque_d4} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>\n"
+            sections_msg.append(bloc)
+        if value_bets_v110 and not etat_pause.get("v110", False):
+            bloc = f"<b>Modele v1.10</b> (bankroll : {bankroll_v110:.0f}€) :\n"
+            for cheval, cote, proba, ev, mise, d4 in value_bets_v110:
+                marque_d4 = " [D4]" if d4 else ""
+                bloc += f"• {cheval}{marque_d4} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>\n"
+            sections_msg.append(bloc)
+        if value_bets_place and not etat_pause.get("place", False):
+            bloc = f"<b>Modele PLACE</b> (bankroll : {bankroll_place:.0f}€, top pick, mise fixe) :\n"
+            for cheval, proba, mise in value_bets_place:
+                bloc += f"• {cheval} — proba place {proba:.1%}, <b>mise {mise:.2f}€</b>\n"
+            sections_msg.append(bloc)
+        if value_bets_deux_sur_quatre and not etat_pause.get("2sur4", False):
+            bloc = f"<b>Modele 2 SUR 4</b> (bankroll : {bankroll_2sur4:.0f}€, top 2, mise fixe) :\n"
+            for chevaux, mise in value_bets_deux_sur_quatre:
+                bloc += f"• {' + '.join(chevaux)} — <b>mise {mise:.2f}€</b>\n"
+            sections_msg.append(bloc)
+        if value_bets_trio and not etat_pause.get("trio", False):
+            bloc = f"<b>Modele TRIO</b> (bankroll : {bankroll_trio:.0f}€, top 3, mise fixe) :\n"
+            for chevaux, mise in value_bets_trio:
+                bloc += f"• {' + '.join(chevaux)} — <b>mise {mise:.2f}€</b>\n"
+            sections_msg.append(bloc)
+        if value_bets_multi and not etat_pause.get("multi", False):
+            bloc = f"<b>Modele {type_multi}</b> (bankroll : {bankroll_multi:.0f}€, top 4, mise fixe) :\n"
+            for chevaux, mise, type_pari in value_bets_multi:
+                bloc += f"• {' + '.join(chevaux)} — <b>mise {mise:.2f}€</b>\n"
+            sections_msg.append(bloc)
+
+        if sections_msg:
             msg = f"🐎 <b>Course {course['hippodrome']} R{course['num_reunion']}C{course['num_course']}</b>\n"
             msg += f"Depart dans ~{int(minutes_avant_depart)} min\n\n"
-            if value_bets_v14:
-                msg += f"<b>Modele v1.4</b> (bankroll : {bankroll_v14:.0f}€) :\n"
-                for cheval, cote, proba, ev, mise in value_bets_v14:
-                    msg += f"• {cheval} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>\n"
-                    log_paris.append({"race_id": race_id, "modele": "v1.4", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
-            if value_bets_v15:
-                msg += f"\n<b>Modele v1.5</b> (bankroll : {bankroll_v15:.0f}€) :\n"
-                for cheval, cote, proba, ev, mise in value_bets_v15:
-                    msg += f"• {cheval} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>\n"
-                    log_paris.append({"race_id": race_id, "modele": "v1.5", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
-            if value_bets_v18:
-                msg += f"\n<b>Modele v1.8</b> (bankroll : {bankroll_v18:.0f}€) :\n"
-                for cheval, cote, proba, ev, mise, d4 in value_bets_v18:
-                    marque_d4 = " [D4]" if d4 else ""
-                    msg += f"• {cheval}{marque_d4} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>\n"
-                    log_paris.append({"race_id": race_id, "modele": "v1.8", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
-            if value_bets_v110:
-                msg += f"\n<b>Modele v1.10</b> (bankroll : {bankroll_v110:.0f}€) :\n"
-                for cheval, cote, proba, ev, mise, d4 in value_bets_v110:
-                    marque_d4 = " [D4]" if d4 else ""
-                    msg += f"• {cheval}{marque_d4} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>\n"
-                    log_paris.append({"race_id": race_id, "modele": "v1.10", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
-            if value_bets_place:
-                msg += f"\n<b>Modele PLACE</b> (bankroll : {bankroll_place:.0f}€, top pick, mise fixe) :\n"
-                for cheval, proba, mise in value_bets_place:
-                    msg += f"• {cheval} — proba place {proba:.1%}, <b>mise {mise:.2f}€</b>\n"
-                    log_paris.append({"race_id": race_id, "modele": "place", "cheval": cheval, "cote": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
-            if value_bets_deux_sur_quatre:
-                msg += f"\n<b>Modele 2 SUR 4</b> (bankroll : {bankroll_2sur4:.0f}€, top 2, mise fixe) :\n"
-                for chevaux, mise in value_bets_deux_sur_quatre:
-                    msg += f"• {' + '.join(chevaux)} — <b>mise {mise:.2f}€</b>\n"
-                    log_paris.append({"race_id": race_id, "modele": "2sur4", "cheval": "|".join(chevaux), "cote": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
-            if value_bets_trio:
-                msg += f"\n<b>Modele TRIO</b> (bankroll : {bankroll_trio:.0f}€, top 3, mise fixe) :\n"
-                for chevaux, mise in value_bets_trio:
-                    msg += f"• {' + '.join(chevaux)} — <b>mise {mise:.2f}€</b>\n"
-                    log_paris.append({"race_id": race_id, "modele": "trio", "cheval": "|".join(chevaux), "cote": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
-            if value_bets_multi:
-                msg += f"\n<b>Modele {type_multi}</b> (bankroll : {bankroll_multi:.0f}€, top 4, mise fixe) :\n"
-                for chevaux, mise, type_pari in value_bets_multi:
-                    msg += f"• {' + '.join(chevaux)} — <b>mise {mise:.2f}€</b>\n"
-                    log_paris.append({"race_id": race_id, "modele": "multi", "cheval": "|".join(chevaux), "cote": type_pari, "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
-
+            msg += "\n".join(sections_msg)
             envoyer_telegram(msg)
+
+        # --- Log TOUJOURS effectue, quelle que soit la pause (le pari reste reel) ---
+        for cheval, cote, proba, ev, mise in value_bets_v14:
+            log_paris.append({"race_id": race_id, "modele": "v1.4", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+        for cheval, cote, proba, ev, mise in value_bets_v15:
+            log_paris.append({"race_id": race_id, "modele": "v1.5", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+        for cheval, cote, proba, ev, mise, d4 in value_bets_v18:
+            log_paris.append({"race_id": race_id, "modele": "v1.8", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+        for cheval, cote, proba, ev, mise, d4 in value_bets_v110:
+            log_paris.append({"race_id": race_id, "modele": "v1.10", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+        for cheval, proba, mise in value_bets_place:
+            log_paris.append({"race_id": race_id, "modele": "place", "cheval": cheval, "cote": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
+        for chevaux, mise in value_bets_deux_sur_quatre:
+            log_paris.append({"race_id": race_id, "modele": "2sur4", "cheval": "|".join(chevaux), "cote": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
+        for chevaux, mise in value_bets_trio:
+            log_paris.append({"race_id": race_id, "modele": "trio", "cheval": "|".join(chevaux), "cote": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
+        for chevaux, mise, type_pari in value_bets_multi:
+            log_paris.append({"race_id": race_id, "modele": "multi", "cheval": "|".join(chevaux), "cote": type_pari, "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
 
         courses_notifiees[race_id] = {
             "date_notif": maintenant.isoformat(),
