@@ -12,14 +12,18 @@ le chat est affectee.
 
 Delai de reponse : jusqu'a ~15 minutes (rythme du cron GitHub Actions).
 
-CORRECTION : /bilan accepte maintenant n'importe quel format de date
-(JJMMAAAA, JJ/MM/AAAA, JJ-MM-AAAA...) - ne garde que les chiffres.
+NOUVEAU : /confiance - estimation bayesienne combinee (backtest + direct),
+ponderee par la taille de chaque echantillon. Reponse a la question :
+"pourquoi attendre que le bruit direct passe alors qu'on a deja un
+backtest tres solide ?" - au lieu d'ignorer le backtest, on le combine
+mathematiquement avec le direct, avec un poids proportionnel a n.
 =============================================================================
 """
 
 import sys
 import os
 import csv
+import statistics
 from datetime import datetime, timezone
 
 import requests
@@ -35,12 +39,27 @@ NOMS_AFFICHAGE = {
     "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
 }
 
+# Reference backtest (walk-forward, flat-bet) pour chaque modele - source :
+# checkpoints du projet + test de significativite specifique du 6 aout
+# pour v1.4/v1.5 (jamais documente separement avant cette date).
+REFERENCE_BACKTEST = {
+    "v14": {"n": 30984, "roi": 0.1075},
+    "v15": {"n": 31756, "roi": 0.1391},
+    "v18": {"n": 34248, "roi": 0.1556},
+    "v110": {"n": 34379, "roi": 0.1879},
+    "place": {"n": 16635, "roi": 0.233},
+    "2sur4": {"n": 10312, "roi": 0.838},
+    "trio": {"n": 14993, "roi": 1.358},
+    "multi": {"n": 10206, "roi": 4.60},
+}
+
 TEXTE_AIDE = (
     "<b>Commandes disponibles</b>\n\n"
     "/bankroll — bankrolls actuelles des 8 strategies\n"
     "/bilan — bilan du jour (gain, perte, ROI, nb paris)\n"
     "/bilan JJ/MM/AAAA — bilan d'une date precise\n"
     "/bilan cumule — bilan depuis le debut\n"
+    "/confiance — estimation combinee backtest+direct, par modele\n"
     "/pause [strategie|tout] — coupe les notifications (le pari continue en arriere-plan)\n"
     "/reprendre [strategie|tout] — reactive les notifications\n"
     "/courses_restantes — courses de trot pas encore parties aujourd'hui\n"
@@ -157,6 +176,54 @@ def traiter_bilan(argument):
     return msg
 
 
+def traiter_confiance():
+    chemin_log = f"{RACINE}/paris_virtuels.csv"
+    lignes_csv = []
+    if os.path.exists(chemin_log):
+        with open(chemin_log, "r", encoding="utf-8") as f:
+            lignes_csv = list(csv.DictReader(f))
+
+    msg = "🔬 <b>Estimation combinee (backtest + direct)</b>\n\n"
+    for cle in MODELES:
+        nom = NOMS_AFFICHAGE[cle]
+        ref = REFERENCE_BACKTEST[cle]
+        stats_direct = calculer_stats_modele(lignes_csv, nom)
+
+        n_bt, roi_bt = ref["n"], ref["roi"]
+        if stats_direct:
+            n_direct, roi_direct = stats_direct["nb"], stats_direct["roi"]
+            roi_combine = (n_bt * roi_bt + n_direct * roi_direct) / (n_bt + n_direct)
+            poids_direct = n_direct / (n_bt + n_direct)
+
+            sous = [l for l in lignes_csv if l.get("modele") == nom and l.get("resultat", "") != ""]
+            returns = []
+            for l in sous:
+                mise = float(l.get("mise", 0) or 0)
+                gain = float(l.get("gain_euros", 0) or 0)
+                if mise > 0:
+                    returns.append(gain / mise)
+
+            ic_texte = ""
+            if len(returns) > 1:
+                ecart_type = statistics.stdev(returns)
+                erreur_type = ecart_type / ((n_bt + n_direct) ** 0.5)
+                ic_bas = roi_combine - 1.96 * erreur_type
+                ic_haut = roi_combine + 1.96 * erreur_type
+                ic_texte = f" IC95%≈[{ic_bas:+.1%},{ic_haut:+.1%}]"
+
+            msg += (
+                f"<b>{nom}</b>\n"
+                f"Backtest : {roi_bt:+.1%} (n={n_bt})\n"
+                f"Direct : {roi_direct:+.1%} (n={n_direct})\n"
+                f"<b>Combine : {roi_combine:+.1%}</b>{ic_texte}\n"
+                f"(poids du direct : {poids_direct:.1%})\n\n"
+            )
+        else:
+            msg += f"<b>{nom}</b>\nBacktest : {roi_bt:+.1%} (n={n_bt})\nAucun pari en direct pour l'instant.\n\n"
+
+    return msg
+
+
 def normaliser_cle_modele(argument):
     for cle, nom in NOMS_AFFICHAGE.items():
         if argument in (cle, nom.lower()):
@@ -250,6 +317,8 @@ def main():
             envoyer_telegram(traiter_bankroll())
         elif commande == "/bilan":
             envoyer_telegram(traiter_bilan(argument))
+        elif commande == "/confiance":
+            envoyer_telegram(traiter_confiance())
         elif commande == "/pause":
             if not argument:
                 envoyer_telegram("Precise une strategie ou 'tout'. Ex : /pause trio")
