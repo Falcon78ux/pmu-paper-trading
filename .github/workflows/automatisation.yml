@@ -2,7 +2,10 @@ name: Suivi PMU automatique
 
 on:
   schedule:
-    - cron: "7,22,37,52 * * * *"
+    # Toutes les 12 min de 13h a 23h59 Paris (11h-21h UTC, heure d'ete CEST)
+    - cron: "0,12,24,36,48 11-21 * * *"
+    # Toutes les 2h le reste du temps (23h-13h Paris = 22h-10h UTC)
+    - cron: "0 22,0,2,4,6,8,10 * * *"
   workflow_dispatch: {}
 
 jobs:
