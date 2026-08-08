@@ -412,3 +412,119 @@ def calculer_mise_2favori(proba, cote, bankroll):
 
 def mettre_a_jour_bankroll(chemin, nouvelle_bankroll):
     sauvegarder_json(chemin, {"bankroll": round(nouvelle_bankroll, 2)})
+    # -----------------------------------------------------------------------
+# VERSIONS "AVEC CONTRIBUTIONS" - meme calcul, renvoie en plus le detail
+# de ce que chaque variable apporte au score (pour affichage Telegram).
+# N'affecte AUCUN calcul de proba/EV/mise existant - fonctions separees.
+# -----------------------------------------------------------------------
+
+def calculer_proba_avec_contributions(valeurs_brutes, modele):
+    """Version de calculer_proba() qui renvoie aussi le detail des
+    contributions. Renvoie (proba, contributions) ou (None, {})."""
+    coefs = modele["coefficients"]
+    norm = modele["normalisation"]
+    contributions = {}
+    z = coefs.get("const", 0.0)
+
+    for var in modele["variables_brutes"]:
+        if var not in valeurs_brutes or valeurs_brutes[var] is None:
+            return None, {}
+        moyenne = norm[var]["moyenne"]
+        ecart_type = norm[var]["ecart_type"]
+        valeur_std = (valeurs_brutes[var] - moyenne) / ecart_type
+        contribution = coefs.get(var + "_std", 0.0) * valeur_std
+        contributions[var] = contribution
+        z += contribution
+
+    return sigmoid(z), contributions
+
+
+def calculer_proba_v18_avec_contributions(valeurs_brutes, modele_v18):
+    """Version de calculer_proba_v18() avec detail des contributions."""
+    coefs = modele_v18["coefficients"]
+    norm = modele_v18["standardisation"]
+
+    requis = ["speed_figure_avant_course", "driver_forme", "biais_hippodrome",
+              "nb_partants_course", "ecart_corde", "log_cote", "deferre_4_pieds"]
+    for var in requis:
+        if var not in valeurs_brutes or valeurs_brutes[var] is None:
+            return None, {}
+
+    def std(var):
+        m = norm[var]["moyenne"]
+        s = norm[var]["ecart_type"]
+        return (valeurs_brutes[var] - m) / s
+
+    sf_std = std("speed_figure_avant_course")
+    driver_std = std("driver_forme")
+    hippo_std = std("biais_hippodrome")
+    nb_partants_std = std("nb_partants_course")
+    ecart_corde_std = std("ecart_corde")
+    interaction = sf_std * driver_std
+
+    contributions = {
+        "vitesse_recente": coefs.get("sf_std", 0.0) * sf_std,
+        "cote_marche": coefs.get("log_cote", 0.0) * valeurs_brutes["log_cote"],
+        "driver": coefs.get("driver_std", 0.0) * driver_std,
+        "hippodrome": coefs.get("hippo_std", 0.0) * hippo_std,
+        "interaction_cheval_driver": coefs.get("interaction_sf_driver", 0.0) * interaction,
+        "nb_partants": coefs.get("nb_partants_std", 0.0) * nb_partants_std,
+        "corde": coefs.get("ecart_corde_std", 0.0) * ecart_corde_std,
+        "deferrage": coefs.get("deferre_4_pieds", 0.0) * valeurs_brutes["deferre_4_pieds"],
+    }
+    z = coefs.get("const", 0.0) + sum(contributions.values())
+    return sigmoid(z), contributions
+
+
+def calculer_proba_v110_ou_place_avec_contributions(valeurs_brutes, modele):
+    """Version de calculer_proba_v110_ou_place() avec detail des
+    contributions - partagee par v1.10 et le modele place."""
+    coefs = modele["coefficients"]
+    norm = modele["moyennes_ecarts_types"]
+
+    requis = ["speed_figure_avant_course", "driver_forme", "biais_hippodrome",
+              "nb_partants_course", "ecart_corde", "age", "taux_victoire_carriere"]
+    for var in requis:
+        if var not in valeurs_brutes or valeurs_brutes[var] is None:
+            return None, {}
+
+    def std(var):
+        m = norm[var]["moyenne"]
+        s = norm[var]["ecart_type"]
+        return (valeurs_brutes[var] - m) / s
+
+    sf_std = std("speed_figure_avant_course")
+    driver_std = std("driver_forme")
+    hippo_std = std("biais_hippodrome")
+    nb_partants_std = std("nb_partants_course")
+    ecart_corde_std = std("ecart_corde")
+    age_std = std("age")
+    taux_victoire_std = std("taux_victoire_carriere")
+    interaction = sf_std * driver_std
+
+    contributions = {
+        "vitesse_recente": coefs.get("sf_std", 0.0) * sf_std,
+        "cote_marche": coefs.get("log_cote", 0.0) * valeurs_brutes["log_cote"],
+        "driver": coefs.get("driver_std", 0.0) * driver_std,
+        "hippodrome": coefs.get("hippo_std", 0.0) * hippo_std,
+        "interaction_cheval_driver": coefs.get("interaction_sf_driver", 0.0) * interaction,
+        "nb_partants": coefs.get("nb_partants_std", 0.0) * nb_partants_std,
+        "corde": coefs.get("ecart_corde_std", 0.0) * ecart_corde_std,
+        "deferrage": coefs.get("deferre_4_pieds", 0.0) * valeurs_brutes["deferre_4_pieds"],
+        "age": coefs.get("age_std", 0.0) * age_std,
+        "sexe_femelle": coefs.get("indicateur_femelle", 0.0) * valeurs_brutes["indicateur_femelle"],
+        "taux_victoire_carriere": coefs.get("taux_victoire_std", 0.0) * taux_victoire_std,
+    }
+    z = coefs.get("const", 0.0) + sum(contributions.values())
+    return sigmoid(z), contributions
+
+
+def formater_contributions(contributions, top_n=3):
+    """Formate les N contributions les plus fortes (en valeur absolue)
+    pour affichage compact dans Telegram."""
+    if not contributions:
+        return ""
+    tries = sorted(contributions.items(), key=lambda x: abs(x[1]), reverse=True)[:top_n]
+    parties = [f"{nom}:{val:+.2f}" for nom, val in tries]
+    return " (" + ", ".join(parties) + ")"
+
