@@ -2,10 +2,10 @@
 =============================================================================
 VERIFIER_RESULTATS.PY - Compare aux resultats reels, met a jour l'historique
 =============================================================================
-DEUXIEME FAVORI ajoute : resolution standard marche gagnant (comme
-v1.4/v1.5/v1.8/v1.10), PLUS mise a jour de etat_dernier_rang.json pour
-TOUS les partants de TOUTES les courses (pas seulement ceux avec un
-pari) - necessaire pour detecter la condition sur les courses futures.
+v1.4+SIRE ajoute : resolution standard marche gagnant, PLUS mise a jour
+de etat_sire_forme.json pour TOUS les partants de TOUTES les courses
+(via la table pedigree statique), necessaire pour alimenter la forme
+des etalons au fil du temps.
 =============================================================================
 """
 
@@ -20,7 +20,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 from commun import (
     charger_json, sauvegarder_json, envoyer_telegram,
     maj_driver, maj_hippodrome, maj_cheval, maj_cheval_corde,
-    maj_dernier_rang, get_bankroll, mettre_a_jour_bankroll,
+    maj_dernier_rang, maj_sire_forme, charger_table_pedigree,
+    get_bankroll, mettre_a_jour_bankroll,
 )
 
 RACINE = os.path.join(os.path.dirname(__file__), "..")
@@ -145,7 +146,9 @@ def main():
     etat_chevaux = charger_json(f"{RACINE}/etat_chevaux.json", {})
     etat_chevaux_corde = charger_json(f"{RACINE}/etat_chevaux_corde.json", {})
     etat_dernier_rang = charger_json(f"{RACINE}/etat_dernier_rang.json", {})
+    etat_sire_forme = charger_json(f"{RACINE}/etat_sire_forme.json", {})
     etat_pause = charger_json(f"{RACINE}/etat_pause.json", {})
+    table_pedigree = charger_table_pedigree(f"{RACINE}/pedigree_aplati.csv")
     constantes = charger_json(f"{RACINE}/constantes.json", {})
     offset_discipline = constantes.get("offset_discipline_monte_moins_attele_ms_km", -400)
     min_partants_sf = constantes.get("min_partants_valides_speed_figure", 6)
@@ -160,6 +163,7 @@ def main():
     bankroll_trio, chemin_bankroll_trio = get_bankroll(RACINE, "trio")
     bankroll_multi, chemin_bankroll_multi = get_bankroll(RACINE, "multi")
     bankroll_2favori, chemin_bankroll_2favori = get_bankroll(RACINE, "2favori")
+    bankroll_v14sire, chemin_bankroll_v14sire = get_bankroll(RACINE, "v14sire")
 
     chemin_log = f"{RACINE}/paris_virtuels.csv"
     if not os.path.exists(chemin_log):
@@ -202,7 +206,6 @@ def main():
         )
         top4_reel_str = "|".join(top4_reel_noms)
 
-        # --- 1. Mise a jour de l'etat glissant pour TOUS les partants ---
         valides = []
         for p in participants:
             incident = p.get("incident", "") or ""
@@ -238,8 +241,12 @@ def main():
             if driver:
                 maj_driver(etat_drivers, driver, gagnant)
 
-            # --- Mise a jour du dernier rang connu, POUR TOUS LES PARTANTS ---
             maj_dernier_rang(etat_dernier_rang, p.get("nom"), rang)
+
+            # --- Mise a jour de la forme du pere, POUR TOUS LES PARTANTS ---
+            pere = table_pedigree.get(p.get("nom"))
+            if pere:
+                maj_sire_forme(etat_sire_forme, pere, float(gagnant))
 
             cote = None
             rapport = p.get("dernierRapportDirect")
@@ -448,7 +455,6 @@ def main():
                     lignes_message.append(f"{emoji} [place] {cheval_parie} (mise {mise:.2f}€) — gain {gain_euros:+.2f}€ | bankroll place : {bankroll_place:.2f}€")
                 continue
 
-            # --- Modeles gagnant classiques (v1.4/v1.5/v1.8/v1.10/2favori) ---
             gagnant = rang_reel == 1
             cote = float(l["cote"])
             mise = float(l.get("mise", 0) or 0)
@@ -461,6 +467,10 @@ def main():
                 bankroll_v14 += gain_euros
                 bankroll_apres = bankroll_v14
                 cle_pause = "v14"
+            elif l["modele"] == "v14sire":
+                bankroll_v14sire += gain_euros
+                bankroll_apres = bankroll_v14sire
+                cle_pause = "v14sire"
             elif l["modele"] == "v1.5":
                 bankroll_v15 += gain_euros
                 bankroll_apres = bankroll_v15
@@ -529,15 +539,17 @@ def main():
     mettre_a_jour_bankroll(chemin_bankroll_trio, bankroll_trio)
     mettre_a_jour_bankroll(chemin_bankroll_multi, bankroll_multi)
     mettre_a_jour_bankroll(chemin_bankroll_2favori, bankroll_2favori)
+    mettre_a_jour_bankroll(chemin_bankroll_v14sire, bankroll_v14sire)
 
     sauvegarder_json(f"{RACINE}/etat_drivers.json", etat_drivers)
     sauvegarder_json(f"{RACINE}/etat_hippodromes.json", etat_hippodromes)
     sauvegarder_json(f"{RACINE}/etat_chevaux.json", etat_chevaux)
     sauvegarder_json(f"{RACINE}/etat_chevaux_corde.json", etat_chevaux_corde)
     sauvegarder_json(f"{RACINE}/etat_dernier_rang.json", etat_dernier_rang)
+    sauvegarder_json(f"{RACINE}/etat_sire_forme.json", etat_sire_forme)
 
     print(f"{len(courses_traitees_ce_run)} courses traitees dans ce run.")
-    print(f"v1.4:{bankroll_v14:.2f} v1.5:{bankroll_v15:.2f} v1.8:{bankroll_v18:.2f} v1.10:{bankroll_v110:.2f} place:{bankroll_place:.2f} 2sur4:{bankroll_2sur4:.2f} trio:{bankroll_trio:.2f} multi:{bankroll_multi:.2f} 2favori:{bankroll_2favori:.2f}")
+    print(f"v1.4:{bankroll_v14:.2f} v14sire:{bankroll_v14sire:.2f} v1.5:{bankroll_v15:.2f} v1.8:{bankroll_v18:.2f} v1.10:{bankroll_v110:.2f} place:{bankroll_place:.2f} 2sur4:{bankroll_2sur4:.2f} trio:{bankroll_trio:.2f} multi:{bankroll_multi:.2f} 2favori:{bankroll_2favori:.2f}")
 
 
 if __name__ == "__main__":
