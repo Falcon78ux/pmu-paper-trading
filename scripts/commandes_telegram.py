@@ -12,9 +12,9 @@ le chat est affectee.
 
 Delai de reponse : jusqu'a ~15 minutes (rythme du cron GitHub Actions).
 
-9 modeles maintenant : v14, v15, v18, v110, place, 2sur4, trio, multi,
-2favori (nouveau - deuxieme favori du jour, deploye avec le modele
-dedie v2, coefficients bases sur 6054 lignes d'entrainement).
+10 modeles maintenant : v14, v14sire (nouveau - v1.4 + genealogie du
+pere, deploye le 9 aout), v15, v18, v110, place, 2sur4, trio, multi,
+2favori.
 =============================================================================
 """
 
@@ -31,17 +31,19 @@ from commun import charger_json, sauvegarder_json, envoyer_telegram
 
 RACINE = os.path.join(os.path.dirname(__file__), "..")
 
-MODELES = ["v14", "v15", "v18", "v110", "place", "2sur4", "trio", "multi", "2favori"]
+MODELES = ["v14", "v14sire", "v15", "v18", "v110", "place", "2sur4", "trio", "multi", "2favori"]
 NOMS_AFFICHAGE = {
-    "v14": "v1.4", "v15": "v1.5", "v18": "v1.8", "v110": "v1.10",
+    "v14": "v1.4", "v14sire": "v1.4+Genealogie", "v15": "v1.5", "v18": "v1.8", "v110": "v1.10",
     "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
     "2favori": "2favori",
 }
 
 # Reference backtest (walk-forward, flat-bet) pour chaque modele.
-# 2favori : modele dedie v2 (probabilite individuelle), 2645 paris.
+# v14sire : v1.4 + sire_forme (genealogie), 30042 paris, ROI +11.76%
+# (walk-forward complet, teste le 9 aout).
 REFERENCE_BACKTEST = {
     "v14": {"n": 30984, "roi": 0.1075},
+    "v14sire": {"n": 30042, "roi": 0.1176},
     "v15": {"n": 31756, "roi": 0.1391},
     "v18": {"n": 34248, "roi": 0.1556},
     "v110": {"n": 34379, "roi": 0.1879},
@@ -54,7 +56,7 @@ REFERENCE_BACKTEST = {
 
 TEXTE_AIDE = (
     "<b>Commandes disponibles</b>\n\n"
-    "/bankroll — bankrolls actuelles des 9 strategies\n"
+    "/bankroll — bankrolls actuelles des 10 strategies\n"
     "/bilan — bilan du jour (gain, perte, ROI, nb paris)\n"
     "/bilan JJ/MM/AAAA — bilan d'une date precise\n"
     "/bilan cumule — bilan depuis le debut\n"
@@ -129,6 +131,15 @@ def normaliser_date(argument):
     return None
 
 
+def cle_log_modele(cle):
+    """Le nom stocke dans paris_virtuels.csv/journal_audit.csv differe
+    parfois de la cle interne - v14sire est stocke tel quel (pas
+    'v1.4+Genealogie'), les autres utilisent le nom d'affichage."""
+    if cle == "v14sire":
+        return "v14sire"
+    return NOMS_AFFICHAGE[cle]
+
+
 def traiter_bilan(argument):
     chemin_log = f"{RACINE}/paris_virtuels.csv"
     if not os.path.exists(chemin_log):
@@ -155,7 +166,7 @@ def traiter_bilan(argument):
     nb_total_global = 0
     for cle in MODELES:
         nom = NOMS_AFFICHAGE[cle]
-        stats = calculer_stats_modele(lignes_filtrees, nom)
+        stats = calculer_stats_modele(lignes_filtrees, cle_log_modele(cle))
         msg += f"<b>{nom}</b>\n"
         if stats:
             msg += f"{stats['nb']} paris, {stats['taux']:.1%} reussite\n"
@@ -186,7 +197,7 @@ def traiter_confiance():
     for cle in MODELES:
         nom = NOMS_AFFICHAGE[cle]
         ref = REFERENCE_BACKTEST[cle]
-        stats_direct = calculer_stats_modele(lignes_csv, nom)
+        stats_direct = calculer_stats_modele(lignes_csv, cle_log_modele(cle))
 
         n_bt, roi_bt = ref["n"], ref["roi"]
         if stats_direct:
@@ -194,7 +205,7 @@ def traiter_confiance():
             roi_combine = (n_bt * roi_bt + n_direct * roi_direct) / (n_bt + n_direct)
             poids_direct = n_direct / (n_bt + n_direct)
 
-            sous = [l for l in lignes_csv if l.get("modele") == nom and l.get("resultat", "") != ""]
+            sous = [l for l in lignes_csv if l.get("modele") == cle_log_modele(cle) and l.get("resultat", "") != ""]
             returns = []
             for l in sous:
                 mise = float(l.get("mise", 0) or 0)
