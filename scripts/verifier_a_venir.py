@@ -2,10 +2,11 @@
 =============================================================================
 VERIFIER_A_VENIR.PY - Detecte les value bets avant chaque course
 =============================================================================
-9 strategies en parallele. NOUVEAU : repartition par variable (top 3
-contributions) affichee pour chaque pari detecte, sur les 9 modeles -
-transparence sur le "pourquoi" du calcul, sans changer aucune decision
-de pari (memes probabilites, meme seuil EV, meme Kelly qu'avant).
+10 strategies en parallele. NOUVEAU : v1.4+SIRE (genealogie du pere,
+9 aout) - reutilise calculer_proba_avec_contributions() existante avec
+sire_forme comme 4e variable. Table pedigree STATIQUE (pedigree_aplati.csv,
+scrapee le 9 aout) - les chevaux debutant apres cette date n'auront pas
+de pere connu.
 =============================================================================
 """
 
@@ -26,8 +27,9 @@ from commun import (
     get_driver_forme, get_biais_hippodrome, get_speed_figure_avant_course,
     get_ecart_corde, extraire_cote_directe, extraire_deferre_4_pieds,
     extraire_age, extraire_indicateur_femelle, extraire_taux_victoire_carriere,
-    get_dernier_rang, get_bankroll, calculer_mise, calculer_mise_v18,
-    calculer_mise_v110, calculer_mise_place, calculer_mise_2favori,
+    get_dernier_rang, get_sire_forme, charger_table_pedigree,
+    get_bankroll, calculer_mise, calculer_mise_v18, calculer_mise_v110,
+    calculer_mise_place, calculer_mise_2favori, calculer_mise_v14sire,
 )
 
 RACINE = os.path.join(os.path.dirname(__file__), "..")
@@ -79,13 +81,16 @@ def main():
     etat_chevaux = charger_json(f"{RACINE}/etat_chevaux.json", {})
     etat_chevaux_corde = charger_json(f"{RACINE}/etat_chevaux_corde.json", {})
     etat_dernier_rang = charger_json(f"{RACINE}/etat_dernier_rang.json", {})
+    etat_sire_forme = charger_json(f"{RACINE}/etat_sire_forme.json", {})
     etat_pause = charger_json(f"{RACINE}/etat_pause.json", {})
+    table_pedigree = charger_table_pedigree(f"{RACINE}/pedigree_aplati.csv")
     modele_v14 = charger_json(f"{RACINE}/modele_v14.json")
     modele_v15 = charger_json(f"{RACINE}/modele_v15.json")
     modele_v18 = charger_json(f"{RACINE}/modele_v18_production.json")
     modele_v110 = charger_json(f"{RACINE}/modele_v110_production.json")
     modele_place = charger_json(f"{RACINE}/modele_place_v1_production.json")
     modele_2favori = charger_json(f"{RACINE}/modele_deuxieme_favori_v2_production.json")
+    modele_v14sire = charger_json(f"{RACINE}/modele_v14_sire_forme_production.json")
     courses_notifiees = charger_json(f"{RACINE}/courses_notifiees.json", {})
 
     bankroll_v14, chemin_bankroll_v14 = get_bankroll(RACINE, "v14")
@@ -97,6 +102,7 @@ def main():
     bankroll_trio, chemin_bankroll_trio = get_bankroll(RACINE, "trio")
     bankroll_multi, chemin_bankroll_multi = get_bankroll(RACINE, "multi")
     bankroll_2favori, chemin_bankroll_2favori = get_bankroll(RACINE, "2favori")
+    bankroll_v14sire, chemin_bankroll_v14sire = get_bankroll(RACINE, "v14sire")
 
     try:
         courses = recuperer_programme_du_jour(date_str)
@@ -140,7 +146,8 @@ def main():
         value_bets_v15 = []
         value_bets_v18 = []
         value_bets_v110 = []
-        candidats_place = []  # (cheval, proba, cote, contributions)
+        value_bets_v14sire = []
+        candidats_place = []
 
         partants_avec_cote = []
 
@@ -182,6 +189,24 @@ def main():
                         mise14 = calculer_mise(proba14, cote, bankroll_v14)
                         if mise14 > 0:
                             value_bets_v14.append((cheval, cote, proba14, ev14, mise14, contrib14))
+
+                # --- v1.4 + SIRE_FORME (genealogie du pere) ---
+                pere = table_pedigree.get(cheval)
+                sire_forme = get_sire_forme(etat_sire_forme, pere)
+                if sire_forme is not None:
+                    proba14sire, contrib14sire = calculer_proba_avec_contributions(
+                        {
+                            "speed_figure_avant_course": sf_avant, "log_cote": log_cote,
+                            "driver_forme": driver_forme, "sire_forme": sire_forme,
+                        },
+                        modele_v14sire,
+                    )
+                    if proba14sire is not None:
+                        ev14sire = proba14sire * cote - 1
+                        if ev14sire > SEUIL_EV:
+                            mise14sire = calculer_mise_v14sire(proba14sire, cote, bankroll_v14sire)
+                            if mise14sire > 0:
+                                value_bets_v14sire.append((cheval, cote, proba14sire, ev14sire, mise14sire, contrib14sire))
 
             if sf_avant is not None and driver_forme is not None and biais_hippo is not None:
                 proba15, contrib15 = calculer_proba_avec_contributions(
@@ -265,7 +290,6 @@ def main():
                 "date_verif": maintenant.isoformat(),
             })
 
-        # --- PLACE : top 1 ---
         value_bets_place = []
         if candidats_place:
             meilleur = max(candidats_place, key=lambda x: x[1])
@@ -273,7 +297,6 @@ def main():
             mise_place = calculer_mise_place()
             value_bets_place.append((cheval_place, proba_place_choisi, mise_place, contrib_place_choisi))
 
-        # --- 2 SUR 4 : top 2 ---
         value_bets_deux_sur_quatre = []
         if len(candidats_place) >= 2:
             top2 = sorted(candidats_place, key=lambda x: x[1], reverse=True)[:2]
@@ -282,7 +305,6 @@ def main():
             mise_2sur4 = calculer_mise_place()
             value_bets_deux_sur_quatre.append((chevaux_choisis, mise_2sur4, contribs_choisies))
 
-        # --- TRIO (non ordonne) : top 3 ---
         value_bets_trio = []
         if len(candidats_place) >= 3:
             top3 = sorted(candidats_place, key=lambda x: x[1], reverse=True)[:3]
@@ -291,7 +313,6 @@ def main():
             mise_trio = calculer_mise_place()
             value_bets_trio.append((chevaux_choisis_trio, mise_trio, contribs_choisies_trio))
 
-        # --- MULTI ou MINI_MULTI : top 4 ---
         value_bets_multi = []
         type_multi = None
         if nb_partants_course >= 14:
@@ -305,7 +326,6 @@ def main():
             mise_multi = calculer_mise_place()
             value_bets_multi.append((chevaux_choisis_multi, mise_multi, type_multi, contribs_choisies_multi))
 
-        # --- DEUXIEME FAVORI ---
         value_bets_2favori = []
         if len(partants_avec_cote) >= 2:
             partants_tries = sorted(partants_avec_cote, key=lambda x: x[1])
@@ -344,6 +364,11 @@ def main():
         if value_bets_v14 and not etat_pause.get("v14", False):
             bloc = f"<b>Modele v1.4</b> (bankroll : {bankroll_v14:.0f}€) :\n"
             for cheval, cote, proba, ev, mise, contrib in value_bets_v14:
+                bloc += f"• {cheval} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>{formater_contributions(contrib)}\n"
+            sections_msg.append(bloc)
+        if value_bets_v14sire and not etat_pause.get("v14sire", False):
+            bloc = f"<b>Modele v1.4+GENEALOGIE</b> (bankroll : {bankroll_v14sire:.0f}€) :\n"
+            for cheval, cote, proba, ev, mise, contrib in value_bets_v14sire:
                 bloc += f"• {cheval} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>{formater_contributions(contrib)}\n"
             sections_msg.append(bloc)
         if value_bets_v15 and not etat_pause.get("v15", False):
@@ -401,9 +426,10 @@ def main():
             msg += "\n".join(sections_msg)
             envoyer_telegram(msg)
 
-        # --- Log TOUJOURS effectue, quelle que soit la pause ---
         for cheval, cote, proba, ev, mise, contrib in value_bets_v14:
             log_paris.append({"race_id": race_id, "modele": "v1.4", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+        for cheval, cote, proba, ev, mise, contrib in value_bets_v14sire:
+            log_paris.append({"race_id": race_id, "modele": "v14sire", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
         for cheval, cote, proba, ev, mise, contrib in value_bets_v15:
             log_paris.append({"race_id": race_id, "modele": "v1.5", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
         for cheval, cote, proba, ev, mise, d4, contrib in value_bets_v18:
