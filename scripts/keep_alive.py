@@ -2,7 +2,7 @@
 =============================================================================
 KEEP_ALIVE.PY - Battement de coeur quotidien AVEC statistiques de performance
 =============================================================================
-9 modeles : v1.4, v1.5, v1.8, v1.10, place, 2sur4, trio, multi, 2favori.
+10 modeles : v1.4, v14sire, v1.5, v1.8, v1.10, place, 2sur4, trio, multi, 2favori.
 =============================================================================
 """
 
@@ -64,11 +64,11 @@ def main():
 
         bankrolls = {
             nom: charger_json(f"{RACINE}/bankroll_{nom}.json", {}).get("bankroll")
-            for nom in ["v14", "v15", "v18", "v110", "place", "2sur4", "trio", "multi", "2favori"]
+            for nom in ["v14", "v14sire", "v15", "v18", "v110", "place", "2sur4", "trio", "multi", "2favori"]
         }
 
         noms_affichage = {
-            "v14": "v1.4", "v15": "v1.5", "v18": "v1.8", "v110": "v1.10",
+            "v14": "v1.4", "v14sire": "v1.4+Genealogie", "v15": "v1.5", "v18": "v1.8", "v110": "v1.10",
             "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
             "2favori": "2favori",
         }
@@ -80,7 +80,7 @@ def main():
         msg += f"Paris logues : {nb_paris_total} ({nb_traites} traites, {nb_en_attente} en attente)\n\n"
 
         for cle, nom_affiche in noms_affichage.items():
-            stats = calculer_stats_modele(lignes, nom_affiche)
+            stats = calculer_stats_modele(lignes, nom_affiche if cle != "v14sire" else "v14sire")
             bankroll = bankrolls[cle]
             msg += f"<b>{nom_affiche}</b>\n"
             if bankroll is not None:
