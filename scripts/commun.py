@@ -527,4 +527,61 @@ def formater_contributions(contributions, top_n=3):
     tries = sorted(contributions.items(), key=lambda x: abs(x[1]), reverse=True)[:top_n]
     parties = [f"{nom}:{val:+.2f}" for nom, val in tries]
     return " (" + ", ".join(parties) + ")"
+# -----------------------------------------------------------------------
+# ETAT "FORME DES ETALONS" (nouveau, pour v1.4 + sire_forme genealogie)
+# -----------------------------------------------------------------------
+# Meme structure que get_driver_forme/maj_driver, mais avec un seuil
+# minimum different (15 au lieu de 20) pour matcher exactement le
+# backtest valide (MIN_FORME_GENITEUR=15 dans les scripts de test).
+
+FENETRE_SIRE = 100
+MIN_SIRE = 15
+
+
+def get_sire_forme(etat_sire_forme, pere):
+    if not pere:
+        return None
+    historique = etat_sire_forme.get(pere, [])
+    if len(historique) < MIN_SIRE:
+        return None
+    return sum(historique) / len(historique)
+
+
+def maj_sire_forme(etat_sire_forme, pere, victoire):
+    if not pere:
+        return
+    historique = etat_sire_forme.get(pere, [])
+    historique.append(victoire)
+    etat_sire_forme[pere] = historique[-FENETRE_SIRE:]
+
+
+def charger_table_pedigree(chemin_csv):
+    """Charge pedigree_aplati.csv en dictionnaire {nom_cheval: pere}.
+    Table STATIQUE (scrapee le 9 aout) - les chevaux debutant apres
+    cette date n'auront pas de pere connu tant qu'une nouvelle collecte
+    n'est pas relancee."""
+    import csv as csv_module
+    table = {}
+    try:
+        with open(chemin_csv, "r", encoding="utf-8") as f:
+            reader = csv_module.DictReader(f)
+            for ligne in reader:
+                if ligne.get("pere"):
+                    table[ligne["nom_pmu"]] = ligne["pere"]
+    except FileNotFoundError:
+        pass
+    return table
+
+
+def calculer_mise_v14sire(proba, cote, bankroll):
+    """Kelly standard (1/10) - dediee, meme principe que calculer_mise_2favori."""
+    b = cote - 1
+    if b <= 0:
+        return 0.0
+    kelly_full = max(0.0, (proba * b - (1 - proba)) / b)
+    kelly_fraction = kelly_full * FRACTION_KELLY
+    mise = min(kelly_fraction * bankroll, PLAFOND_MISE)
+    if mise < MISE_MINIMUM:
+        return 0.0
+    return round(mise, 2)
 
