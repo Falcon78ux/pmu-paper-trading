@@ -1,0 +1,35 @@
+{
+  "variables_brutes": [
+    "speed_figure_avant_course",
+    "log_cote",
+    "driver_forme",
+    "sire_forme"
+  ],
+  "coefficients": {
+    "const": -2.862516437762934,
+    "speed_figure_avant_course_std": 0.039515236965219434,
+    "log_cote_std": -1.4515653936413038,
+    "driver_forme_std": 0.06753180542899523,
+    "sire_forme_std": 0.03545039112580232
+  },
+  "normalisation": {
+    "speed_figure_avant_course": {
+      "moyenne": -134.77196543145212,
+      "ecart_type": 791.2845101760086
+    },
+    "log_cote": {
+      "moyenne": 2.886922772521412,
+      "ecart_type": 1.1588294110062687
+    },
+    "driver_forme": {
+      "moyenne": 0.08480912790033394,
+      "ecart_type": 0.061549327474922824
+    },
+    "sire_forme": {
+      "moyenne": 0.10516227528181037,
+      "ecart_type": 0.04607279566410764
+    }
+  },
+  "date_entrainement": "2026-08-09",
+  "nb_lignes_entrainement": 152740
+}
