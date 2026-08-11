@@ -50,10 +50,10 @@ def envoyer_telegram(message):
 
 
 # -----------------------------------------------------------------------
-# SCORING DU MODELE v1.4/v1.5 (regression logistique - INCHANGE)
+# SCORING DU MODELE v1.4/v1.5 (regression logistique)
 # -----------------------------------------------------------------------
-# Reutilisee telle quelle pour la strategie "2e favori" (memes 4
-# variables, meme structure de standardisation systematique).
+# Reutilisee aussi pour v14sire, 2favori (memes 4 variables, meme
+# structure de standardisation systematique).
 
 def sigmoid(x):
     try:
@@ -65,8 +65,9 @@ def sigmoid(x):
 def calculer_proba(valeurs_brutes, modele):
     """
     valeurs_brutes : dict {nom_variable: valeur}, ex {"speed_figure_avant_course": 120, "log_cote": 1.5, ...}
-    modele : dict charge depuis modele_v14.json, modele_v15.json, ou
-             modele_deuxieme_favori_v2_production.json
+    modele : dict charge depuis modele_v14.json, modele_v15.json,
+             modele_deuxieme_favori_v2_production.json, ou
+             modele_v14_sire_forme_production.json
     Retourne la probabilite de victoire estimee, ou None si une variable manque.
     """
     coefs = modele["coefficients"]
@@ -210,7 +211,7 @@ def extraire_taux_victoire_carriere(participant):
 
 
 # -----------------------------------------------------------------------
-# GESTION DE L'ETAT GLISSANT (driver / hippodrome / cheval) - INCHANGE
+# GESTION DE L'ETAT GLISSANT (driver / hippodrome / cheval)
 # -----------------------------------------------------------------------
 
 FENETRE_DRIVER = 100
@@ -300,11 +301,8 @@ def maj_cheval_corde(etat_chevaux_corde, cheval, corde, speed_figure_brut):
 
 
 # -----------------------------------------------------------------------
-# ETAT "DERNIER RANG D'ARRIVEE" (nouveau, pour la strategie 2e favori)
+# ETAT "DERNIER RANG D'ARRIVEE" (pour la strategie 2e favori)
 # -----------------------------------------------------------------------
-# Suit le dernier rang d'arrivee connu de CHAQUE cheval, tous modeles
-# confondus - necessaire pour detecter "le 1er favori du jour etait
-# NON PLACE (rang > 3) a sa derniere sortie".
 
 def get_dernier_rang(etat_dernier_rang, cheval):
     return etat_dernier_rang.get(cheval)
@@ -312,6 +310,49 @@ def get_dernier_rang(etat_dernier_rang, cheval):
 
 def maj_dernier_rang(etat_dernier_rang, cheval, rang_arrivee):
     etat_dernier_rang[cheval] = rang_arrivee
+
+
+# -----------------------------------------------------------------------
+# ETAT "FORME DES ETALONS" (pour v1.4 + sire_forme genealogie)
+# -----------------------------------------------------------------------
+
+FENETRE_SIRE = 100
+MIN_SIRE = 15
+
+
+def get_sire_forme(etat_sire_forme, pere):
+    if not pere:
+        return None
+    historique = etat_sire_forme.get(pere, [])
+    if len(historique) < MIN_SIRE:
+        return None
+    return sum(historique) / len(historique)
+
+
+def maj_sire_forme(etat_sire_forme, pere, victoire):
+    if not pere:
+        return
+    historique = etat_sire_forme.get(pere, [])
+    historique.append(victoire)
+    etat_sire_forme[pere] = historique[-FENETRE_SIRE:]
+
+
+def charger_table_pedigree(chemin_csv):
+    """Charge pedigree_aplati.csv en dictionnaire {nom_cheval: pere}.
+    Table STATIQUE (scrapee le 9 aout) - les chevaux debutant apres
+    cette date n'auront pas de pere connu tant qu'une nouvelle collecte
+    n'est pas relancee."""
+    import csv as csv_module
+    table = {}
+    try:
+        with open(chemin_csv, "r", encoding="utf-8") as f:
+            reader = csv_module.DictReader(f)
+            for ligne in reader:
+                if ligne.get("pere"):
+                    table[ligne["nom_pmu"]] = ligne["pere"]
+    except FileNotFoundError:
+        pass
+    return table
 
 
 # -----------------------------------------------------------------------
@@ -333,8 +374,8 @@ def extraire_deferre_4_pieds(participant):
 # BANKROLL VIRTUELLE ET MISE KELLY (une bankroll independante par modele)
 # -----------------------------------------------------------------------
 
-FRACTION_KELLY = 0.10       # v1.4/v1.5/v1.8/v1.10/2favori (regime normal)
-FRACTION_KELLY_D4 = 0.05    # v1.8/v1.10 uniquement, sur les paris D4
+FRACTION_KELLY = 0.10       # v1.4/v1.5/v1.8/v1.10/v1.10-favori/2favori (regime normal)
+FRACTION_KELLY_D4 = 0.05    # v1.8/v1.10/v1.10-favori uniquement, sur les paris D4
 PLAFOND_MISE = 20           # en euros
 MISE_MINIMUM = 1.50         # mise minimum reelle au PMU
 BANKROLL_DEPART = 1236      # en euros
@@ -377,7 +418,8 @@ def calculer_mise_v18(proba, cote, bankroll, est_deferre_4_pieds):
 
 
 def calculer_mise_v110(proba, cote, bankroll, est_deferre_4_pieds):
-    """Identique structure v1.8 - deux regimes."""
+    """Identique structure v1.8 - deux regimes. Reutilisee telle quelle
+    pour v1.10-favori (meme modele, meme logique de mise)."""
     b = cote - 1
     if b <= 0:
         return 0.0
@@ -396,9 +438,20 @@ def calculer_mise_place():
 
 
 def calculer_mise_2favori(proba, cote, bankroll):
-    """Kelly standard (1/10) - meme structure que calculer_mise(), mais
-    fonction dediee pour ne prendre aucun risque sur v1.4/v1.5 qui
-    partagent calculer_proba() mais pas calculer_mise()."""
+    """Kelly standard (1/10) - dediee, meme structure que calculer_mise()."""
+    b = cote - 1
+    if b <= 0:
+        return 0.0
+    kelly_full = max(0.0, (proba * b - (1 - proba)) / b)
+    kelly_fraction = kelly_full * FRACTION_KELLY
+    mise = min(kelly_fraction * bankroll, PLAFOND_MISE)
+    if mise < MISE_MINIMUM:
+        return 0.0
+    return round(mise, 2)
+
+
+def calculer_mise_v14sire(proba, cote, bankroll):
+    """Kelly standard (1/10) - dediee pour v1.4+sire_forme."""
     b = cote - 1
     if b <= 0:
         return 0.0
@@ -412,15 +465,16 @@ def calculer_mise_2favori(proba, cote, bankroll):
 
 def mettre_a_jour_bankroll(chemin, nouvelle_bankroll):
     sauvegarder_json(chemin, {"bankroll": round(nouvelle_bankroll, 2)})
-    # -----------------------------------------------------------------------
-# VERSIONS "AVEC CONTRIBUTIONS" - meme calcul, renvoie en plus le detail
-# de ce que chaque variable apporte au score (pour affichage Telegram).
-# N'affecte AUCUN calcul de proba/EV/mise existant - fonctions separees.
+
+
+# -----------------------------------------------------------------------
+# VERSIONS "AVEC CONTRIBUTIONS" - detail de ce que chaque variable
+# apporte au score. Conservees dans commun.py pour reference/reutilisation
+# future, mais NE SONT PLUS appelees dans les messages Telegram (retire
+# le 11 aout pour simplifier - messages trop verbeux).
 # -----------------------------------------------------------------------
 
 def calculer_proba_avec_contributions(valeurs_brutes, modele):
-    """Version de calculer_proba() qui renvoie aussi le detail des
-    contributions. Renvoie (proba, contributions) ou (None, {})."""
     coefs = modele["coefficients"]
     norm = modele["normalisation"]
     contributions = {}
@@ -440,7 +494,6 @@ def calculer_proba_avec_contributions(valeurs_brutes, modele):
 
 
 def calculer_proba_v18_avec_contributions(valeurs_brutes, modele_v18):
-    """Version de calculer_proba_v18() avec detail des contributions."""
     coefs = modele_v18["coefficients"]
     norm = modele_v18["standardisation"]
 
@@ -477,8 +530,6 @@ def calculer_proba_v18_avec_contributions(valeurs_brutes, modele_v18):
 
 
 def calculer_proba_v110_ou_place_avec_contributions(valeurs_brutes, modele):
-    """Version de calculer_proba_v110_ou_place() avec detail des
-    contributions - partagee par v1.10 et le modele place."""
     coefs = modele["coefficients"]
     norm = modele["moyennes_ecarts_types"]
 
@@ -520,68 +571,11 @@ def calculer_proba_v110_ou_place_avec_contributions(valeurs_brutes, modele):
 
 
 def formater_contributions(contributions, top_n=3):
-    """Formate les N contributions les plus fortes (en valeur absolue)
-    pour affichage compact dans Telegram."""
+    """Formate les N contributions les plus fortes - non utilisee dans
+    les messages Telegram actuels (retiree le 11 aout), gardee au cas
+    ou une future fonctionnalite en aurait besoin."""
     if not contributions:
         return ""
     tries = sorted(contributions.items(), key=lambda x: abs(x[1]), reverse=True)[:top_n]
     parties = [f"{nom}:{val:+.2f}" for nom, val in tries]
     return " (" + ", ".join(parties) + ")"
-# -----------------------------------------------------------------------
-# ETAT "FORME DES ETALONS" (nouveau, pour v1.4 + sire_forme genealogie)
-# -----------------------------------------------------------------------
-# Meme structure que get_driver_forme/maj_driver, mais avec un seuil
-# minimum different (15 au lieu de 20) pour matcher exactement le
-# backtest valide (MIN_FORME_GENITEUR=15 dans les scripts de test).
-
-FENETRE_SIRE = 100
-MIN_SIRE = 15
-
-
-def get_sire_forme(etat_sire_forme, pere):
-    if not pere:
-        return None
-    historique = etat_sire_forme.get(pere, [])
-    if len(historique) < MIN_SIRE:
-        return None
-    return sum(historique) / len(historique)
-
-
-def maj_sire_forme(etat_sire_forme, pere, victoire):
-    if not pere:
-        return
-    historique = etat_sire_forme.get(pere, [])
-    historique.append(victoire)
-    etat_sire_forme[pere] = historique[-FENETRE_SIRE:]
-
-
-def charger_table_pedigree(chemin_csv):
-    """Charge pedigree_aplati.csv en dictionnaire {nom_cheval: pere}.
-    Table STATIQUE (scrapee le 9 aout) - les chevaux debutant apres
-    cette date n'auront pas de pere connu tant qu'une nouvelle collecte
-    n'est pas relancee."""
-    import csv as csv_module
-    table = {}
-    try:
-        with open(chemin_csv, "r", encoding="utf-8") as f:
-            reader = csv_module.DictReader(f)
-            for ligne in reader:
-                if ligne.get("pere"):
-                    table[ligne["nom_pmu"]] = ligne["pere"]
-    except FileNotFoundError:
-        pass
-    return table
-
-
-def calculer_mise_v14sire(proba, cote, bankroll):
-    """Kelly standard (1/10) - dediee, meme principe que calculer_mise_2favori."""
-    b = cote - 1
-    if b <= 0:
-        return 0.0
-    kelly_full = max(0.0, (proba * b - (1 - proba)) / b)
-    kelly_fraction = kelly_full * FRACTION_KELLY
-    mise = min(kelly_fraction * bankroll, PLAFOND_MISE)
-    if mise < MISE_MINIMUM:
-        return 0.0
-    return round(mise, 2)
-
