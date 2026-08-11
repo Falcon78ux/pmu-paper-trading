@@ -2,11 +2,11 @@
 =============================================================================
 VERIFIER_A_VENIR.PY - Detecte les value bets avant chaque course
 =============================================================================
-10 strategies en parallele. NOUVEAU : v1.4+SIRE (genealogie du pere,
-9 aout) - reutilise calculer_proba_avec_contributions() existante avec
-sire_forme comme 4e variable. Table pedigree STATIQUE (pedigree_aplati.csv,
-scrapee le 9 aout) - les chevaux debutant apres cette date n'auront pas
-de pere connu.
+11 strategies en parallele. NOUVEAU : v1.10-FAVORI (reutilise le meme
+modele/calcul que v1.10, filtre en plus sur "le cheval selectionne
+est-il aussi le favori du marche" - meme proba/EV/mise que v1.10, juste
+loggue separement). Messages SIMPLIFIES : detail des contributions
+retire (etait trop verbeux).
 =============================================================================
 """
 
@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from commun import (
     charger_json, sauvegarder_json, envoyer_telegram,
     calculer_proba_avec_contributions, calculer_proba_v18_avec_contributions,
-    calculer_proba_v110_ou_place_avec_contributions, formater_contributions,
+    calculer_proba_v110_ou_place_avec_contributions,
     get_driver_forme, get_biais_hippodrome, get_speed_figure_avant_course,
     get_ecart_corde, extraire_cote_directe, extraire_deferre_4_pieds,
     extraire_age, extraire_indicateur_femelle, extraire_taux_victoire_carriere,
@@ -94,15 +94,16 @@ def main():
     courses_notifiees = charger_json(f"{RACINE}/courses_notifiees.json", {})
 
     bankroll_v14, chemin_bankroll_v14 = get_bankroll(RACINE, "v14")
+    bankroll_v14sire, chemin_bankroll_v14sire = get_bankroll(RACINE, "v14sire")
     bankroll_v15, chemin_bankroll_v15 = get_bankroll(RACINE, "v15")
     bankroll_v18, chemin_bankroll_v18 = get_bankroll(RACINE, "v18")
     bankroll_v110, chemin_bankroll_v110 = get_bankroll(RACINE, "v110")
+    bankroll_v110favori, chemin_bankroll_v110favori = get_bankroll(RACINE, "v110favori")
     bankroll_place, chemin_bankroll_place = get_bankroll(RACINE, "place")
     bankroll_2sur4, chemin_bankroll_2sur4 = get_bankroll(RACINE, "2sur4")
     bankroll_trio, chemin_bankroll_trio = get_bankroll(RACINE, "trio")
     bankroll_multi, chemin_bankroll_multi = get_bankroll(RACINE, "multi")
     bankroll_2favori, chemin_bankroll_2favori = get_bankroll(RACINE, "2favori")
-    bankroll_v14sire, chemin_bankroll_v14sire = get_bankroll(RACINE, "v14sire")
 
     try:
         courses = recuperer_programme_du_jour(date_str)
@@ -143,10 +144,10 @@ def main():
         }
 
         value_bets_v14 = []
+        value_bets_v14sire = []
         value_bets_v15 = []
         value_bets_v18 = []
         value_bets_v110 = []
-        value_bets_v14sire = []
         candidats_place = []
 
         partants_avec_cote = []
@@ -188,9 +189,8 @@ def main():
                     if ev14 > SEUIL_EV:
                         mise14 = calculer_mise(proba14, cote, bankroll_v14)
                         if mise14 > 0:
-                            value_bets_v14.append((cheval, cote, proba14, ev14, mise14, contrib14))
+                            value_bets_v14.append((cheval, cote, proba14, ev14, mise14))
 
-                # --- v1.4 + SIRE_FORME (genealogie du pere) ---
                 pere = table_pedigree.get(cheval)
                 sire_forme = get_sire_forme(etat_sire_forme, pere)
                 if sire_forme is not None:
@@ -206,7 +206,7 @@ def main():
                         if ev14sire > SEUIL_EV:
                             mise14sire = calculer_mise_v14sire(proba14sire, cote, bankroll_v14sire)
                             if mise14sire > 0:
-                                value_bets_v14sire.append((cheval, cote, proba14sire, ev14sire, mise14sire, contrib14sire))
+                                value_bets_v14sire.append((cheval, cote, proba14sire, ev14sire, mise14sire))
 
             if sf_avant is not None and driver_forme is not None and biais_hippo is not None:
                 proba15, contrib15 = calculer_proba_avec_contributions(
@@ -221,7 +221,7 @@ def main():
                     if ev15 > SEUIL_EV:
                         mise15 = calculer_mise(proba15, cote, bankroll_v15)
                         if mise15 > 0:
-                            value_bets_v15.append((cheval, cote, proba15, ev15, mise15, contrib15))
+                            value_bets_v15.append((cheval, cote, proba15, ev15, mise15))
 
             ecart_corde = None
             deferre_4_pieds = None
@@ -242,7 +242,7 @@ def main():
                     if ev18 > SEUIL_EV:
                         mise18 = calculer_mise_v18(proba18, cote, bankroll_v18, deferre_4_pieds)
                         if mise18 > 0:
-                            value_bets_v18.append((cheval, cote, proba18, ev18, mise18, deferre_4_pieds, contrib18))
+                            value_bets_v18.append((cheval, cote, proba18, ev18, mise18, deferre_4_pieds))
             else:
                 diag["sans_ecart_corde"] += 1
 
@@ -266,11 +266,11 @@ def main():
                     if ev110 > SEUIL_EV:
                         mise110 = calculer_mise_v110(proba110, cote, bankroll_v110, deferre_4_pieds)
                         if mise110 > 0:
-                            value_bets_v110.append((cheval, cote, proba110, ev110, mise110, deferre_4_pieds, contrib110))
+                            value_bets_v110.append((cheval, cote, proba110, ev110, mise110, deferre_4_pieds))
 
                 proba_place, contrib_place = calculer_proba_v110_ou_place_avec_contributions(valeurs_communes, modele_place)
                 if proba_place is not None:
-                    candidats_place.append((cheval, proba_place, cote, contrib_place))
+                    candidats_place.append((cheval, proba_place, cote))
 
         diag["valides_pour_place"] = len(candidats_place)
 
@@ -293,25 +293,23 @@ def main():
         value_bets_place = []
         if candidats_place:
             meilleur = max(candidats_place, key=lambda x: x[1])
-            cheval_place, proba_place_choisi, _, contrib_place_choisi = meilleur
+            cheval_place, proba_place_choisi, _ = meilleur
             mise_place = calculer_mise_place()
-            value_bets_place.append((cheval_place, proba_place_choisi, mise_place, contrib_place_choisi))
+            value_bets_place.append((cheval_place, proba_place_choisi, mise_place))
 
         value_bets_deux_sur_quatre = []
         if len(candidats_place) >= 2:
             top2 = sorted(candidats_place, key=lambda x: x[1], reverse=True)[:2]
             chevaux_choisis = [c[0] for c in top2]
-            contribs_choisies = [c[3] for c in top2]
             mise_2sur4 = calculer_mise_place()
-            value_bets_deux_sur_quatre.append((chevaux_choisis, mise_2sur4, contribs_choisies))
+            value_bets_deux_sur_quatre.append((chevaux_choisis, mise_2sur4))
 
         value_bets_trio = []
         if len(candidats_place) >= 3:
             top3 = sorted(candidats_place, key=lambda x: x[1], reverse=True)[:3]
             chevaux_choisis_trio = [c[0] for c in top3]
-            contribs_choisies_trio = [c[3] for c in top3]
             mise_trio = calculer_mise_place()
-            value_bets_trio.append((chevaux_choisis_trio, mise_trio, contribs_choisies_trio))
+            value_bets_trio.append((chevaux_choisis_trio, mise_trio))
 
         value_bets_multi = []
         type_multi = None
@@ -322,9 +320,8 @@ def main():
         if type_multi and len(candidats_place) >= 4:
             top4 = sorted(candidats_place, key=lambda x: x[1], reverse=True)[:4]
             chevaux_choisis_multi = [c[0] for c in top4]
-            contribs_choisies_multi = [c[3] for c in top4]
             mise_multi = calculer_mise_place()
-            value_bets_multi.append((chevaux_choisis_multi, mise_multi, type_multi, contribs_choisies_multi))
+            value_bets_multi.append((chevaux_choisis_multi, mise_multi, type_multi))
 
         value_bets_2favori = []
         if len(partants_avec_cote) >= 2:
@@ -357,67 +354,79 @@ def main():
                             if ev_2favori > SEUIL_EV:
                                 mise_2favori = calculer_mise_2favori(proba_2favori, cote_2favori, bankroll_2favori)
                                 if mise_2favori > 0:
-                                    value_bets_2favori.append((cheval_2favori, cote_2favori, proba_2favori, ev_2favori, mise_2favori, contrib_2favori))
+                                    value_bets_2favori.append((cheval_2favori, cote_2favori, proba_2favori, ev_2favori, mise_2favori))
 
-        # --- Construction du message : respecte etat_pause.json ---
+        # --- v1.10-FAVORI : reutilise EXACTEMENT les candidats deja calcules par v1.10,
+        # ne garde que ceux ou le cheval est aussi le favori du marche (cote la plus basse) ---
+        value_bets_v110favori = []
+        if partants_avec_cote and value_bets_v110:
+            cote_favori_marche = min(c for _, c in partants_avec_cote)
+            for item in value_bets_v110:
+                cheval_v110, cote_v110 = item[0], item[1]
+                if cote_v110 == cote_favori_marche:
+                    proba_v110, ev_v110, deferre_v110 = item[2], item[3], item[5]
+                    mise_v110favori = calculer_mise_v110(proba_v110, cote_v110, bankroll_v110favori, deferre_v110)
+                    if mise_v110favori > 0:
+                        value_bets_v110favori.append((cheval_v110, cote_v110, proba_v110, ev_v110, mise_v110favori, deferre_v110))
+
+        # --- Construction du message : respecte etat_pause.json, SANS detail des contributions ---
         sections_msg = []
         if value_bets_v14 and not etat_pause.get("v14", False):
             bloc = f"<b>Modele v1.4</b> (bankroll : {bankroll_v14:.0f}€) :\n"
-            for cheval, cote, proba, ev, mise, contrib in value_bets_v14:
-                bloc += f"• {cheval} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>{formater_contributions(contrib)}\n"
+            for cheval, cote, proba, ev, mise in value_bets_v14:
+                bloc += f"• {cheval} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>\n"
             sections_msg.append(bloc)
         if value_bets_v14sire and not etat_pause.get("v14sire", False):
             bloc = f"<b>Modele v1.4+GENEALOGIE</b> (bankroll : {bankroll_v14sire:.0f}€) :\n"
-            for cheval, cote, proba, ev, mise, contrib in value_bets_v14sire:
-                bloc += f"• {cheval} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>{formater_contributions(contrib)}\n"
+            for cheval, cote, proba, ev, mise in value_bets_v14sire:
+                bloc += f"• {cheval} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>\n"
             sections_msg.append(bloc)
         if value_bets_v15 and not etat_pause.get("v15", False):
             bloc = f"<b>Modele v1.5</b> (bankroll : {bankroll_v15:.0f}€) :\n"
-            for cheval, cote, proba, ev, mise, contrib in value_bets_v15:
-                bloc += f"• {cheval} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>{formater_contributions(contrib)}\n"
+            for cheval, cote, proba, ev, mise in value_bets_v15:
+                bloc += f"• {cheval} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>\n"
             sections_msg.append(bloc)
         if value_bets_v18 and not etat_pause.get("v18", False):
             bloc = f"<b>Modele v1.8</b> (bankroll : {bankroll_v18:.0f}€) :\n"
-            for cheval, cote, proba, ev, mise, d4, contrib in value_bets_v18:
+            for cheval, cote, proba, ev, mise, d4 in value_bets_v18:
                 marque_d4 = " [D4]" if d4 else ""
-                bloc += f"• {cheval}{marque_d4} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>{formater_contributions(contrib)}\n"
+                bloc += f"• {cheval}{marque_d4} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>\n"
             sections_msg.append(bloc)
         if value_bets_v110 and not etat_pause.get("v110", False):
             bloc = f"<b>Modele v1.10</b> (bankroll : {bankroll_v110:.0f}€) :\n"
-            for cheval, cote, proba, ev, mise, d4, contrib in value_bets_v110:
+            for cheval, cote, proba, ev, mise, d4 in value_bets_v110:
                 marque_d4 = " [D4]" if d4 else ""
-                bloc += f"• {cheval}{marque_d4} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>{formater_contributions(contrib)}\n"
+                bloc += f"• {cheval}{marque_d4} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>\n"
+            sections_msg.append(bloc)
+        if value_bets_v110favori and not etat_pause.get("v110favori", False):
+            bloc = f"<b>Modele v1.10-FAVORI</b> (bankroll : {bankroll_v110favori:.0f}€) :\n"
+            for cheval, cote, proba, ev, mise, d4 in value_bets_v110favori:
+                bloc += f"• {cheval} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>\n"
             sections_msg.append(bloc)
         if value_bets_place and not etat_pause.get("place", False):
             bloc = f"<b>Modele PLACE</b> (bankroll : {bankroll_place:.0f}€, top pick, mise fixe) :\n"
-            for cheval, proba, mise, contrib in value_bets_place:
-                bloc += f"• {cheval} — proba place {proba:.1%}, <b>mise {mise:.2f}€</b>{formater_contributions(contrib)}\n"
+            for cheval, proba, mise in value_bets_place:
+                bloc += f"• {cheval} — proba place {proba:.1%}, <b>mise {mise:.2f}€</b>\n"
             sections_msg.append(bloc)
         if value_bets_deux_sur_quatre and not etat_pause.get("2sur4", False):
             bloc = f"<b>Modele 2 SUR 4</b> (bankroll : {bankroll_2sur4:.0f}€, top 2, mise fixe) :\n"
-            for chevaux, mise, contribs in value_bets_deux_sur_quatre:
+            for chevaux, mise in value_bets_deux_sur_quatre:
                 bloc += f"• {' + '.join(chevaux)} — <b>mise {mise:.2f}€</b>\n"
-                for cheval_nom, contrib in zip(chevaux, contribs):
-                    bloc += f"   {cheval_nom}{formater_contributions(contrib)}\n"
             sections_msg.append(bloc)
         if value_bets_trio and not etat_pause.get("trio", False):
             bloc = f"<b>Modele TRIO</b> (bankroll : {bankroll_trio:.0f}€, top 3, mise fixe) :\n"
-            for chevaux, mise, contribs in value_bets_trio:
+            for chevaux, mise in value_bets_trio:
                 bloc += f"• {' + '.join(chevaux)} — <b>mise {mise:.2f}€</b>\n"
-                for cheval_nom, contrib in zip(chevaux, contribs):
-                    bloc += f"   {cheval_nom}{formater_contributions(contrib)}\n"
             sections_msg.append(bloc)
         if value_bets_multi and not etat_pause.get("multi", False):
             bloc = f"<b>Modele {type_multi}</b> (bankroll : {bankroll_multi:.0f}€, top 4, mise fixe) :\n"
-            for chevaux, mise, type_pari, contribs in value_bets_multi:
+            for chevaux, mise, type_pari in value_bets_multi:
                 bloc += f"• {' + '.join(chevaux)} — <b>mise {mise:.2f}€</b>\n"
-                for cheval_nom, contrib in zip(chevaux, contribs):
-                    bloc += f"   {cheval_nom}{formater_contributions(contrib)}\n"
             sections_msg.append(bloc)
         if value_bets_2favori and not etat_pause.get("2favori", False):
             bloc = f"<b>Modele 2E FAVORI</b> (bankroll : {bankroll_2favori:.0f}€) :\n"
-            for cheval, cote, proba, ev, mise, contrib in value_bets_2favori:
-                bloc += f"• {cheval} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>{formater_contributions(contrib)}\n"
+            for cheval, cote, proba, ev, mise in value_bets_2favori:
+                bloc += f"• {cheval} — cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}€</b>\n"
             sections_msg.append(bloc)
 
         if sections_msg:
@@ -426,25 +435,27 @@ def main():
             msg += "\n".join(sections_msg)
             envoyer_telegram(msg)
 
-        for cheval, cote, proba, ev, mise, contrib in value_bets_v14:
+        for cheval, cote, proba, ev, mise in value_bets_v14:
             log_paris.append({"race_id": race_id, "modele": "v1.4", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
-        for cheval, cote, proba, ev, mise, contrib in value_bets_v14sire:
+        for cheval, cote, proba, ev, mise in value_bets_v14sire:
             log_paris.append({"race_id": race_id, "modele": "v14sire", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
-        for cheval, cote, proba, ev, mise, contrib in value_bets_v15:
+        for cheval, cote, proba, ev, mise in value_bets_v15:
             log_paris.append({"race_id": race_id, "modele": "v1.5", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
-        for cheval, cote, proba, ev, mise, d4, contrib in value_bets_v18:
+        for cheval, cote, proba, ev, mise, d4 in value_bets_v18:
             log_paris.append({"race_id": race_id, "modele": "v1.8", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
-        for cheval, cote, proba, ev, mise, d4, contrib in value_bets_v110:
+        for cheval, cote, proba, ev, mise, d4 in value_bets_v110:
             log_paris.append({"race_id": race_id, "modele": "v1.10", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
-        for cheval, proba, mise, contrib in value_bets_place:
+        for cheval, cote, proba, ev, mise, d4 in value_bets_v110favori:
+            log_paris.append({"race_id": race_id, "modele": "v110favori", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+        for cheval, proba, mise in value_bets_place:
             log_paris.append({"race_id": race_id, "modele": "place", "cheval": cheval, "cote": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
-        for chevaux, mise, contribs in value_bets_deux_sur_quatre:
+        for chevaux, mise in value_bets_deux_sur_quatre:
             log_paris.append({"race_id": race_id, "modele": "2sur4", "cheval": "|".join(chevaux), "cote": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
-        for chevaux, mise, contribs in value_bets_trio:
+        for chevaux, mise in value_bets_trio:
             log_paris.append({"race_id": race_id, "modele": "trio", "cheval": "|".join(chevaux), "cote": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
-        for chevaux, mise, type_pari, contribs in value_bets_multi:
+        for chevaux, mise, type_pari in value_bets_multi:
             log_paris.append({"race_id": race_id, "modele": "multi", "cheval": "|".join(chevaux), "cote": type_pari, "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
-        for cheval, cote, proba, ev, mise, contrib in value_bets_2favori:
+        for cheval, cote, proba, ev, mise in value_bets_2favori:
             log_paris.append({"race_id": race_id, "modele": "2favori", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
 
         courses_notifiees[race_id] = {
