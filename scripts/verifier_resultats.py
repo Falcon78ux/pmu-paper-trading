@@ -2,10 +2,8 @@
 =============================================================================
 VERIFIER_RESULTATS.PY - Compare aux resultats reels, met a jour l'historique
 =============================================================================
-v1.4+SIRE ajoute : resolution standard marche gagnant, PLUS mise a jour
-de etat_sire_forme.json pour TOUS les partants de TOUTES les courses
-(via la table pedigree statique), necessaire pour alimenter la forme
-des etalons au fil du temps.
+v1.10-FAVORI ajoute : resolution standard marche gagnant, identique a
+v1.10 (meme mecanique gagnant/perdant), bankroll separee.
 =============================================================================
 """
 
@@ -155,15 +153,16 @@ def main():
     plafond_ecart = constantes.get("plafond_ecart_speed_figure_ms", 8000)
 
     bankroll_v14, chemin_bankroll_v14 = get_bankroll(RACINE, "v14")
+    bankroll_v14sire, chemin_bankroll_v14sire = get_bankroll(RACINE, "v14sire")
     bankroll_v15, chemin_bankroll_v15 = get_bankroll(RACINE, "v15")
     bankroll_v18, chemin_bankroll_v18 = get_bankroll(RACINE, "v18")
     bankroll_v110, chemin_bankroll_v110 = get_bankroll(RACINE, "v110")
+    bankroll_v110favori, chemin_bankroll_v110favori = get_bankroll(RACINE, "v110favori")
     bankroll_place, chemin_bankroll_place = get_bankroll(RACINE, "place")
     bankroll_2sur4, chemin_bankroll_2sur4 = get_bankroll(RACINE, "2sur4")
     bankroll_trio, chemin_bankroll_trio = get_bankroll(RACINE, "trio")
     bankroll_multi, chemin_bankroll_multi = get_bankroll(RACINE, "multi")
     bankroll_2favori, chemin_bankroll_2favori = get_bankroll(RACINE, "2favori")
-    bankroll_v14sire, chemin_bankroll_v14sire = get_bankroll(RACINE, "v14sire")
 
     chemin_log = f"{RACINE}/paris_virtuels.csv"
     if not os.path.exists(chemin_log):
@@ -243,7 +242,6 @@ def main():
 
             maj_dernier_rang(etat_dernier_rang, p.get("nom"), rang)
 
-            # --- Mise a jour de la forme du pere, POUR TOUS LES PARTANTS ---
             pere = table_pedigree.get(p.get("nom"))
             if pere:
                 maj_sire_forme(etat_sire_forme, pere, float(gagnant))
@@ -483,6 +481,10 @@ def main():
                 bankroll_v110 += gain_euros
                 bankroll_apres = bankroll_v110
                 cle_pause = "v110"
+            elif l["modele"] == "v110favori":
+                bankroll_v110favori += gain_euros
+                bankroll_apres = bankroll_v110favori
+                cle_pause = "v110favori"
             elif l["modele"] == "2favori":
                 bankroll_2favori += gain_euros
                 bankroll_apres = bankroll_2favori
@@ -531,15 +533,16 @@ def main():
             writer.writerow(l)
 
     mettre_a_jour_bankroll(chemin_bankroll_v14, bankroll_v14)
+    mettre_a_jour_bankroll(chemin_bankroll_v14sire, bankroll_v14sire)
     mettre_a_jour_bankroll(chemin_bankroll_v15, bankroll_v15)
     mettre_a_jour_bankroll(chemin_bankroll_v18, bankroll_v18)
     mettre_a_jour_bankroll(chemin_bankroll_v110, bankroll_v110)
+    mettre_a_jour_bankroll(chemin_bankroll_v110favori, bankroll_v110favori)
     mettre_a_jour_bankroll(chemin_bankroll_place, bankroll_place)
     mettre_a_jour_bankroll(chemin_bankroll_2sur4, bankroll_2sur4)
     mettre_a_jour_bankroll(chemin_bankroll_trio, bankroll_trio)
     mettre_a_jour_bankroll(chemin_bankroll_multi, bankroll_multi)
     mettre_a_jour_bankroll(chemin_bankroll_2favori, bankroll_2favori)
-    mettre_a_jour_bankroll(chemin_bankroll_v14sire, bankroll_v14sire)
 
     sauvegarder_json(f"{RACINE}/etat_drivers.json", etat_drivers)
     sauvegarder_json(f"{RACINE}/etat_hippodromes.json", etat_hippodromes)
@@ -549,7 +552,7 @@ def main():
     sauvegarder_json(f"{RACINE}/etat_sire_forme.json", etat_sire_forme)
 
     print(f"{len(courses_traitees_ce_run)} courses traitees dans ce run.")
-    print(f"v1.4:{bankroll_v14:.2f} v14sire:{bankroll_v14sire:.2f} v1.5:{bankroll_v15:.2f} v1.8:{bankroll_v18:.2f} v1.10:{bankroll_v110:.2f} place:{bankroll_place:.2f} 2sur4:{bankroll_2sur4:.2f} trio:{bankroll_trio:.2f} multi:{bankroll_multi:.2f} 2favori:{bankroll_2favori:.2f}")
+    print(f"v1.4:{bankroll_v14:.2f} v14sire:{bankroll_v14sire:.2f} v1.5:{bankroll_v15:.2f} v1.8:{bankroll_v18:.2f} v1.10:{bankroll_v110:.2f} v110favori:{bankroll_v110favori:.2f} place:{bankroll_place:.2f} 2sur4:{bankroll_2sur4:.2f} trio:{bankroll_trio:.2f} multi:{bankroll_multi:.2f} 2favori:{bankroll_2favori:.2f}")
 
 
 if __name__ == "__main__":
