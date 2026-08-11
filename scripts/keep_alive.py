@@ -2,7 +2,8 @@
 =============================================================================
 KEEP_ALIVE.PY - Battement de coeur quotidien AVEC statistiques de performance
 =============================================================================
-10 modeles : v1.4, v14sire, v1.5, v1.8, v1.10, place, 2sur4, trio, multi, 2favori.
+11 modeles : v1.4, v1.4+Genealogie, v1.5, v1.8, v1.10, v1.10-Favori,
+place, 2sur4, trio, multi, 2favori.
 =============================================================================
 """
 
@@ -62,13 +63,22 @@ def main():
         nb_traites = sum(1 for l in lignes if l.get("resultat", "") != "")
         nb_en_attente = nb_paris_total - nb_traites
 
+        cles_modeles = ["v14", "v14sire", "v15", "v18", "v110", "v110favori", "place", "2sur4", "trio", "multi", "2favori"]
         bankrolls = {
             nom: charger_json(f"{RACINE}/bankroll_{nom}.json", {}).get("bankroll")
-            for nom in ["v14", "v14sire", "v15", "v18", "v110", "place", "2sur4", "trio", "multi", "2favori"]
+            for nom in cles_modeles
         }
 
         noms_affichage = {
-            "v14": "v1.4", "v14sire": "v1.4+Genealogie", "v15": "v1.5", "v18": "v1.8", "v110": "v1.10",
+            "v14": "v1.4", "v14sire": "v1.4+Genealogie", "v15": "v1.5", "v18": "v1.8",
+            "v110": "v1.10", "v110favori": "v1.10-Favori",
+            "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
+            "2favori": "2favori",
+        }
+
+        cle_log = {
+            "v14": "v1.4", "v14sire": "v14sire", "v15": "v1.5", "v18": "v1.8",
+            "v110": "v1.10", "v110favori": "v110favori",
             "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
             "2favori": "2favori",
         }
@@ -79,8 +89,9 @@ def main():
         msg = f"\U0001F4CA <b>Bilan quotidien</b> \u2014 {maintenant.strftime('%d/%m/%Y %H:%M')} UTC\n\n"
         msg += f"Paris logues : {nb_paris_total} ({nb_traites} traites, {nb_en_attente} en attente)\n\n"
 
-        for cle, nom_affiche in noms_affichage.items():
-            stats = calculer_stats_modele(lignes, nom_affiche if cle != "v14sire" else "v14sire")
+        for cle in cles_modeles:
+            nom_affiche = noms_affichage[cle]
+            stats = calculer_stats_modele(lignes, cle_log[cle])
             bankroll = bankrolls[cle]
             msg += f"<b>{nom_affiche}</b>\n"
             if bankroll is not None:
