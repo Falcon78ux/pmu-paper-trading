@@ -376,10 +376,32 @@ def extraire_deferre_4_pieds(participant):
 
 FRACTION_KELLY = 0.10       # v1.4/v1.5/v1.8/v1.10/v1.10-favori/2favori (regime normal)
 FRACTION_KELLY_D4 = 0.05    # v1.8/v1.10/v1.10-favori uniquement, sur les paris D4
-PLAFOND_MISE = 20           # en euros
 MISE_MINIMUM = 1.50         # mise minimum reelle au PMU
 BANKROLL_DEPART = 1236      # en euros
 MISE_FIXE_PLACE = 10        # EUR, pour place/2sur4/trio/multi (pas de cote en direct)
+
+# --- PLAFOND DE MISE PAR PALIERS (deploye le 12 aout, remplace le
+# plafond fixe 20EUR precedent) ---
+# Grandit avec la bankroll de CHAQUE modele independamment (chaque
+# strategie a sa propre bankroll, donc son propre palier courant).
+# Valide par simulation le 12 aout : +2051%/an (v1.10 sans filtre) et
+# +1269.6%/an (favori seul) contre +535%/an et +354.8%/an avec
+# l'ancien plafond fixe, sans exploser mathematiquement (contrairement
+# a un plafond proportionnel illimite, teste et rejete le meme jour).
+PALIERS_PLAFOND = [
+    (5000, 20),
+    (20000, 50),
+    (50000, 100),
+    (150000, 250),
+    (float("inf"), 500),
+]
+
+
+def obtenir_plafond_dynamique(bankroll):
+    for seuil, plafond in PALIERS_PLAFOND:
+        if bankroll < seuil:
+            return plafond
+    return PALIERS_PLAFOND[-1][1]
 
 
 def get_bankroll(racine, nom_modele):
@@ -390,13 +412,14 @@ def get_bankroll(racine, nom_modele):
 
 
 def calculer_mise(proba, cote, bankroll):
-    """Formule de Kelly fractionne (1/10), plafonnee a 20EUR. v1.4/v1.5."""
+    """Formule de Kelly fractionne (1/10), plafond par paliers. v1.4/v1.5."""
     b = cote - 1
     if b <= 0:
         return 0.0
     kelly_full = max(0.0, (proba * b - (1 - proba)) / b)
     kelly_fraction = kelly_full * FRACTION_KELLY
-    mise = min(kelly_fraction * bankroll, PLAFOND_MISE)
+    plafond = obtenir_plafond_dynamique(bankroll)
+    mise = min(kelly_fraction * bankroll, plafond)
     if mise < MISE_MINIMUM:
         return 0.0
     return round(mise, 2)
@@ -404,60 +427,68 @@ def calculer_mise(proba, cote, bankroll):
 
 def calculer_mise_v18(proba, cote, bankroll, est_deferre_4_pieds):
     """Kelly a deux regimes pour v1.8 : fraction reduite (1/20) sur les
-    paris D4, fraction normale (1/10) sinon."""
+    paris D4, fraction normale (1/10) sinon. Plafond par paliers."""
     b = cote - 1
     if b <= 0:
         return 0.0
     kelly_full = max(0.0, (proba * b - (1 - proba)) / b)
     fraction = FRACTION_KELLY_D4 if est_deferre_4_pieds else FRACTION_KELLY
     kelly_fraction = kelly_full * fraction
-    mise = min(kelly_fraction * bankroll, PLAFOND_MISE)
+    plafond = obtenir_plafond_dynamique(bankroll)
+    mise = min(kelly_fraction * bankroll, plafond)
     if mise < MISE_MINIMUM:
         return 0.0
     return round(mise, 2)
 
 
 def calculer_mise_v110(proba, cote, bankroll, est_deferre_4_pieds):
-    """Identique structure v1.8 - deux regimes. Reutilisee telle quelle
-    pour v1.10-favori (meme modele, meme logique de mise)."""
+    """Identique structure v1.8 - deux regimes, plafond par paliers.
+    Reutilisee telle quelle pour v1.10-favori (meme modele, meme
+    logique de mise, bankroll separee donc palier independant)."""
     b = cote - 1
     if b <= 0:
         return 0.0
     kelly_full = max(0.0, (proba * b - (1 - proba)) / b)
     fraction = FRACTION_KELLY_D4 if est_deferre_4_pieds else FRACTION_KELLY
     kelly_fraction = kelly_full * fraction
-    mise = min(kelly_fraction * bankroll, PLAFOND_MISE)
+    plafond = obtenir_plafond_dynamique(bankroll)
+    mise = min(kelly_fraction * bankroll, plafond)
     if mise < MISE_MINIMUM:
         return 0.0
     return round(mise, 2)
 
 
 def calculer_mise_place():
-    """Mise fixe - pas de cote place connue avant la course."""
+    """Mise fixe - pas de cote place connue avant la course. INCHANGEE
+    par le deploiement des paliers (mecanisme different, mise fixe pas
+    Kelly)."""
     return MISE_FIXE_PLACE
 
 
 def calculer_mise_2favori(proba, cote, bankroll):
-    """Kelly standard (1/10) - dediee, meme structure que calculer_mise()."""
+    """Kelly standard (1/10) - dediee, plafond par paliers."""
     b = cote - 1
     if b <= 0:
         return 0.0
     kelly_full = max(0.0, (proba * b - (1 - proba)) / b)
     kelly_fraction = kelly_full * FRACTION_KELLY
-    mise = min(kelly_fraction * bankroll, PLAFOND_MISE)
+    plafond = obtenir_plafond_dynamique(bankroll)
+    mise = min(kelly_fraction * bankroll, plafond)
     if mise < MISE_MINIMUM:
         return 0.0
     return round(mise, 2)
 
 
 def calculer_mise_v14sire(proba, cote, bankroll):
-    """Kelly standard (1/10) - dediee pour v1.4+sire_forme."""
+    """Kelly standard (1/10) - dediee pour v1.4+sire_forme, plafond par
+    paliers."""
     b = cote - 1
     if b <= 0:
         return 0.0
     kelly_full = max(0.0, (proba * b - (1 - proba)) / b)
     kelly_fraction = kelly_full * FRACTION_KELLY
-    mise = min(kelly_fraction * bankroll, PLAFOND_MISE)
+    plafond = obtenir_plafond_dynamique(bankroll)
+    mise = min(kelly_fraction * bankroll, plafond)
     if mise < MISE_MINIMUM:
         return 0.0
     return round(mise, 2)
