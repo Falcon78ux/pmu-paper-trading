@@ -384,10 +384,6 @@ MISE_FIXE_PLACE = 10        # EUR, pour place/2sur4/trio/multi (pas de cote en d
 # plafond fixe 20EUR precedent) ---
 # Grandit avec la bankroll de CHAQUE modele independamment (chaque
 # strategie a sa propre bankroll, donc son propre palier courant).
-# Valide par simulation le 12 aout : +2051%/an (v1.10 sans filtre) et
-# +1269.6%/an (favori seul) contre +535%/an et +354.8%/an avec
-# l'ancien plafond fixe, sans exploser mathematiquement (contrairement
-# a un plafond proportionnel illimite, teste et rejete le meme jour).
 PALIERS_PLAFOND = [
     (5000, 20),
     (20000, 50),
@@ -459,9 +455,7 @@ def calculer_mise_v110(proba, cote, bankroll, est_deferre_4_pieds):
 
 
 def calculer_mise_place():
-    """Mise fixe - pas de cote place connue avant la course. INCHANGEE
-    par le deploiement des paliers (mecanisme different, mise fixe pas
-    Kelly)."""
+    """Mise fixe - pas de cote place connue avant la course."""
     return MISE_FIXE_PLACE
 
 
