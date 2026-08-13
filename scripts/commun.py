@@ -2,6 +2,10 @@
 =============================================================================
 FONCTIONS COMMUNES - utilisees par verifier_a_venir.py et verifier_resultats.py
 =============================================================================
+NOUVEAU (13 aout) : protection contre le plafond de gain PMU (100000EUR
+par pari). Ajoutee a toutes les fonctions de mise Kelly (marche
+gagnant) : mise = min(mise_kelly, plafond_dynamique, 100000/cote).
+=============================================================================
 """
 
 import json
@@ -9,10 +13,6 @@ import math
 import os
 import requests
 
-
-# -----------------------------------------------------------------------
-# CHARGEMENT / SAUVEGARDE JSON
-# -----------------------------------------------------------------------
 
 def charger_json(chemin, defaut=None):
     if os.path.exists(chemin):
@@ -26,13 +26,7 @@ def sauvegarder_json(chemin, data):
         json.dump(data, f, ensure_ascii=False)
 
 
-# -----------------------------------------------------------------------
-# TELEGRAM
-# -----------------------------------------------------------------------
-
 def envoyer_telegram(message):
-    """Envoie un message via le bot Telegram. Token/chat_id lus depuis les
-    variables d'environnement (injectees par GitHub Actions depuis les Secrets)."""
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
 
@@ -49,12 +43,6 @@ def envoyer_telegram(message):
         print(f"Exception envoi Telegram : {e}")
 
 
-# -----------------------------------------------------------------------
-# SCORING DU MODELE v1.4/v1.5 (regression logistique)
-# -----------------------------------------------------------------------
-# Reutilisee aussi pour v14sire, 2favori (memes 4 variables, meme
-# structure de standardisation systematique).
-
 def sigmoid(x):
     try:
         return 1 / (1 + math.exp(-x))
@@ -63,13 +51,6 @@ def sigmoid(x):
 
 
 def calculer_proba(valeurs_brutes, modele):
-    """
-    valeurs_brutes : dict {nom_variable: valeur}, ex {"speed_figure_avant_course": 120, "log_cote": 1.5, ...}
-    modele : dict charge depuis modele_v14.json, modele_v15.json,
-             modele_deuxieme_favori_v2_production.json, ou
-             modele_v14_sire_forme_production.json
-    Retourne la probabilite de victoire estimee, ou None si une variable manque.
-    """
     coefs = modele["coefficients"]
     norm = modele["normalisation"]
     z = coefs.get("const", 0.0)
@@ -85,19 +66,7 @@ def calculer_proba(valeurs_brutes, modele):
     return sigmoid(z)
 
 
-# -----------------------------------------------------------------------
-# SCORING DU MODELE v1.8 (avec interaction, nb_partants, corde, deferrage)
-# -----------------------------------------------------------------------
-
 def calculer_proba_v18(valeurs_brutes, modele_v18):
-    """
-    valeurs_brutes attendu : {
-        "speed_figure_avant_course": ..., "log_cote": ..., "driver_forme": ...,
-        "biais_hippodrome": ..., "nb_partants_course": ..., "ecart_corde": ...,
-        "deferre_4_pieds": 0 ou 1,
-    }
-    modele_v18 : dict charge depuis modele_v18_production.json
-    """
     coefs = modele_v18["coefficients"]
     norm = modele_v18["standardisation"]
 
@@ -132,25 +101,7 @@ def calculer_proba_v18(valeurs_brutes, modele_v18):
     return sigmoid(z)
 
 
-# -----------------------------------------------------------------------
-# SCORING COMMUN v1.10 ET PLACE (memes variables, coefficients differents)
-# -----------------------------------------------------------------------
-
 def calculer_proba_v110_ou_place(valeurs_brutes, modele):
-    """
-    Fonction partagee par v1.10 (cible : gagnant) et le modele place
-    (cible : place) - memes variables exactement, seuls les coefficients
-    charges depuis le JSON different.
-
-    valeurs_brutes attendu : {
-        "speed_figure_avant_course", "log_cote", "driver_forme",
-        "biais_hippodrome", "nb_partants_course", "ecart_corde",
-        "deferre_4_pieds", "age", "indicateur_femelle",
-        "taux_victoire_carriere",
-    }
-    modele : dict charge depuis modele_v110_production.json ou
-             modele_place_v1_production.json
-    """
     coefs = modele["coefficients"]
     norm = modele["moyennes_ecarts_types"]
 
@@ -190,10 +141,6 @@ def calculer_proba_v110_ou_place(valeurs_brutes, modele):
     return sigmoid(z)
 
 
-# -----------------------------------------------------------------------
-# EXTRACTION DIRECTE DEPUIS LE PARTICIPANT (pas d'etat glissant necessaire)
-# -----------------------------------------------------------------------
-
 def extraire_age(participant):
     return participant.get("age")
 
@@ -210,10 +157,6 @@ def extraire_taux_victoire_carriere(participant):
     return nb_victoires / nb_courses
 
 
-# -----------------------------------------------------------------------
-# GESTION DE L'ETAT GLISSANT (driver / hippodrome / cheval)
-# -----------------------------------------------------------------------
-
 FENETRE_DRIVER = 100
 FENETRE_HIPPODROME = 200
 FENETRE_CHEVAL = 3
@@ -229,7 +172,6 @@ def get_driver_forme(etat_drivers, driver):
 
 
 def maj_driver(etat_drivers, driver, victoire):
-    """victoire : 1 si gagnant, 0 sinon."""
     historique = etat_drivers.get(driver, [])
     historique.append(victoire)
     etat_drivers[driver] = historique[-FENETRE_DRIVER:]
@@ -267,18 +209,11 @@ def maj_cheval(etat_chevaux, cheval, speed_figure_brut):
     etat_chevaux[cheval] = historique[-FENETRE_CHEVAL:]
 
 
-# -----------------------------------------------------------------------
-# ETAT GLISSANT SPECIFIQUE A L'APTITUDE CORDE (v1.8)
-# -----------------------------------------------------------------------
-
 FENETRE_CORDE = 5
 MIN_CORDE = 2
 
 
 def get_ecart_corde(etat_chevaux_corde, etat_chevaux, cheval, corde_du_jour):
-    """Renvoie l'ecart entre la performance du cheval specifiquement dans
-    CE sens de rotation et sa moyenne generale. 0 si pas assez d'historique
-    specifique a ce sens (valeur neutre, comme a l'entrainement)."""
     donnees = etat_chevaux_corde.get(cheval, {})
     historique_corde = donnees.get(corde_du_jour, [])
     if len(historique_corde) < MIN_CORDE:
@@ -292,17 +227,13 @@ def get_ecart_corde(etat_chevaux_corde, etat_chevaux, cheval, corde_du_jour):
 
 def maj_cheval_corde(etat_chevaux_corde, cheval, corde, speed_figure_brut):
     if corde not in ("CORDE_GAUCHE", "CORDE_DROITE"):
-        return  # ignore LIGNE_DROITE / valeurs manquantes - pas de sens de rotation
+        return
     donnees = etat_chevaux_corde.get(cheval, {"CORDE_GAUCHE": [], "CORDE_DROITE": []})
     historique = donnees.get(corde, [])
     historique.append(speed_figure_brut)
     donnees[corde] = historique[-FENETRE_CORDE:]
     etat_chevaux_corde[cheval] = donnees
 
-
-# -----------------------------------------------------------------------
-# ETAT "DERNIER RANG D'ARRIVEE" (pour la strategie 2e favori)
-# -----------------------------------------------------------------------
 
 def get_dernier_rang(etat_dernier_rang, cheval):
     return etat_dernier_rang.get(cheval)
@@ -311,10 +242,6 @@ def get_dernier_rang(etat_dernier_rang, cheval):
 def maj_dernier_rang(etat_dernier_rang, cheval, rang_arrivee):
     etat_dernier_rang[cheval] = rang_arrivee
 
-
-# -----------------------------------------------------------------------
-# ETAT "FORME DES ETALONS" (pour v1.4 + sire_forme genealogie)
-# -----------------------------------------------------------------------
 
 FENETRE_SIRE = 100
 MIN_SIRE = 15
@@ -338,10 +265,6 @@ def maj_sire_forme(etat_sire_forme, pere, victoire):
 
 
 def charger_table_pedigree(chemin_csv):
-    """Charge pedigree_aplati.csv en dictionnaire {nom_cheval: pere}.
-    Table STATIQUE (scrapee le 9 aout) - les chevaux debutant apres
-    cette date n'auront pas de pere connu tant qu'une nouvelle collecte
-    n'est pas relancee."""
     import csv as csv_module
     table = {}
     try:
@@ -355,10 +278,6 @@ def charger_table_pedigree(chemin_csv):
     return table
 
 
-# -----------------------------------------------------------------------
-# EXTRACTION DE LA COTE DIRECTE DEPUIS UN PARTICIPANT (API PMU)
-# -----------------------------------------------------------------------
-
 def extraire_cote_directe(participant):
     rapport = participant.get("dernierRapportDirect")
     if rapport and rapport.get("typePari") == "SIMPLE_GAGNANT":
@@ -370,20 +289,12 @@ def extraire_deferre_4_pieds(participant):
     return 1 if participant.get("deferre") == "DEFERRE_ANTERIEURS_POSTERIEURS" else 0
 
 
-# -----------------------------------------------------------------------
-# BANKROLL VIRTUELLE ET MISE KELLY (une bankroll independante par modele)
-# -----------------------------------------------------------------------
+FRACTION_KELLY = 0.10
+FRACTION_KELLY_D4 = 0.05
+MISE_MINIMUM = 1.50
+BANKROLL_DEPART = 1236
+MISE_FIXE_PLACE = 10
 
-FRACTION_KELLY = 0.10       # v1.4/v1.5/v1.8/v1.10/v1.10-favori/2favori (regime normal)
-FRACTION_KELLY_D4 = 0.05    # v1.8/v1.10/v1.10-favori uniquement, sur les paris D4
-MISE_MINIMUM = 1.50         # mise minimum reelle au PMU
-BANKROLL_DEPART = 1236      # en euros
-MISE_FIXE_PLACE = 10        # EUR, pour place/2sur4/trio/multi (pas de cote en direct)
-
-# --- PLAFOND DE MISE PAR PALIERS (deploye le 12 aout, remplace le
-# plafond fixe 20EUR precedent) ---
-# Grandit avec la bankroll de CHAQUE modele independamment (chaque
-# strategie a sa propre bankroll, donc son propre palier courant).
 PALIERS_PLAFOND = [
     (5000, 20),
     (20000, 50),
@@ -391,6 +302,8 @@ PALIERS_PLAFOND = [
     (150000, 250),
     (float("inf"), 500),
 ]
+
+PLAFOND_GAIN_PMU = 100000
 
 
 def obtenir_plafond_dynamique(bankroll):
@@ -401,88 +314,82 @@ def obtenir_plafond_dynamique(bankroll):
 
 
 def get_bankroll(racine, nom_modele):
-    """Cree le fichier au depart si absent."""
     chemin = f"{racine}/bankroll_{nom_modele}.json"
     data = charger_json(chemin, {"bankroll": BANKROLL_DEPART})
     return data["bankroll"], chemin
 
 
 def calculer_mise(proba, cote, bankroll):
-    """Formule de Kelly fractionne (1/10), plafond par paliers. v1.4/v1.5."""
     b = cote - 1
     if b <= 0:
         return 0.0
     kelly_full = max(0.0, (proba * b - (1 - proba)) / b)
     kelly_fraction = kelly_full * FRACTION_KELLY
-    plafond = obtenir_plafond_dynamique(bankroll)
-    mise = min(kelly_fraction * bankroll, plafond)
+    plafond_palier = obtenir_plafond_dynamique(bankroll)
+    plafond_gain = PLAFOND_GAIN_PMU / cote
+    mise = min(kelly_fraction * bankroll, plafond_palier, plafond_gain)
     if mise < MISE_MINIMUM:
         return 0.0
     return round(mise, 2)
 
 
 def calculer_mise_v18(proba, cote, bankroll, est_deferre_4_pieds):
-    """Kelly a deux regimes pour v1.8 : fraction reduite (1/20) sur les
-    paris D4, fraction normale (1/10) sinon. Plafond par paliers."""
     b = cote - 1
     if b <= 0:
         return 0.0
     kelly_full = max(0.0, (proba * b - (1 - proba)) / b)
     fraction = FRACTION_KELLY_D4 if est_deferre_4_pieds else FRACTION_KELLY
     kelly_fraction = kelly_full * fraction
-    plafond = obtenir_plafond_dynamique(bankroll)
-    mise = min(kelly_fraction * bankroll, plafond)
+    plafond_palier = obtenir_plafond_dynamique(bankroll)
+    plafond_gain = PLAFOND_GAIN_PMU / cote
+    mise = min(kelly_fraction * bankroll, plafond_palier, plafond_gain)
     if mise < MISE_MINIMUM:
         return 0.0
     return round(mise, 2)
 
 
 def calculer_mise_v110(proba, cote, bankroll, est_deferre_4_pieds):
-    """Identique structure v1.8 - deux regimes, plafond par paliers.
-    Reutilisee telle quelle pour v1.10-favori (meme modele, meme
-    logique de mise, bankroll separee donc palier independant)."""
     b = cote - 1
     if b <= 0:
         return 0.0
     kelly_full = max(0.0, (proba * b - (1 - proba)) / b)
     fraction = FRACTION_KELLY_D4 if est_deferre_4_pieds else FRACTION_KELLY
     kelly_fraction = kelly_full * fraction
-    plafond = obtenir_plafond_dynamique(bankroll)
-    mise = min(kelly_fraction * bankroll, plafond)
+    plafond_palier = obtenir_plafond_dynamique(bankroll)
+    plafond_gain = PLAFOND_GAIN_PMU / cote
+    mise = min(kelly_fraction * bankroll, plafond_palier, plafond_gain)
     if mise < MISE_MINIMUM:
         return 0.0
     return round(mise, 2)
 
 
 def calculer_mise_place():
-    """Mise fixe - pas de cote place connue avant la course."""
     return MISE_FIXE_PLACE
 
 
 def calculer_mise_2favori(proba, cote, bankroll):
-    """Kelly standard (1/10) - dediee, plafond par paliers."""
     b = cote - 1
     if b <= 0:
         return 0.0
     kelly_full = max(0.0, (proba * b - (1 - proba)) / b)
     kelly_fraction = kelly_full * FRACTION_KELLY
-    plafond = obtenir_plafond_dynamique(bankroll)
-    mise = min(kelly_fraction * bankroll, plafond)
+    plafond_palier = obtenir_plafond_dynamique(bankroll)
+    plafond_gain = PLAFOND_GAIN_PMU / cote
+    mise = min(kelly_fraction * bankroll, plafond_palier, plafond_gain)
     if mise < MISE_MINIMUM:
         return 0.0
     return round(mise, 2)
 
 
 def calculer_mise_v14sire(proba, cote, bankroll):
-    """Kelly standard (1/10) - dediee pour v1.4+sire_forme, plafond par
-    paliers."""
     b = cote - 1
     if b <= 0:
         return 0.0
     kelly_full = max(0.0, (proba * b - (1 - proba)) / b)
     kelly_fraction = kelly_full * FRACTION_KELLY
-    plafond = obtenir_plafond_dynamique(bankroll)
-    mise = min(kelly_fraction * bankroll, plafond)
+    plafond_palier = obtenir_plafond_dynamique(bankroll)
+    plafond_gain = PLAFOND_GAIN_PMU / cote
+    mise = min(kelly_fraction * bankroll, plafond_palier, plafond_gain)
     if mise < MISE_MINIMUM:
         return 0.0
     return round(mise, 2)
@@ -491,13 +398,6 @@ def calculer_mise_v14sire(proba, cote, bankroll):
 def mettre_a_jour_bankroll(chemin, nouvelle_bankroll):
     sauvegarder_json(chemin, {"bankroll": round(nouvelle_bankroll, 2)})
 
-
-# -----------------------------------------------------------------------
-# VERSIONS "AVEC CONTRIBUTIONS" - detail de ce que chaque variable
-# apporte au score. Conservees dans commun.py pour reference/reutilisation
-# future, mais NE SONT PLUS appelees dans les messages Telegram (retire
-# le 11 aout pour simplifier - messages trop verbeux).
-# -----------------------------------------------------------------------
 
 def calculer_proba_avec_contributions(valeurs_brutes, modele):
     coefs = modele["coefficients"]
@@ -596,9 +496,6 @@ def calculer_proba_v110_ou_place_avec_contributions(valeurs_brutes, modele):
 
 
 def formater_contributions(contributions, top_n=3):
-    """Formate les N contributions les plus fortes - non utilisee dans
-    les messages Telegram actuels (retiree le 11 aout), gardee au cas
-    ou une future fonctionnalite en aurait besoin."""
     if not contributions:
         return ""
     tries = sorted(contributions.items(), key=lambda x: abs(x[1]), reverse=True)[:top_n]
