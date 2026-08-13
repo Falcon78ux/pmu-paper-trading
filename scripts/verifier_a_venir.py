@@ -2,11 +2,10 @@
 =============================================================================
 VERIFIER_A_VENIR.PY - Detecte les value bets avant chaque course
 =============================================================================
-11 strategies en parallele. NOUVEAU : v1.10-FAVORI (reutilise le meme
-modele/calcul que v1.10, filtre en plus sur "le cheval selectionne
-est-il aussi le favori du marche" - meme proba/EV/mise que v1.10, juste
-loggue separement). Messages SIMPLIFIES : detail des contributions
-retire (etait trop verbeux).
+11 strategies en parallele. NOUVEAU : ajout de la colonne cote_cloture
+(vide a la detection, remplie plus tard par verifier_resultats.py) pour
+le suivi du Closing Line Value (CLV) - compare notre cote de detection
+a la cote de fermeture des paris, independant du resultat gagnant/perdant.
 =============================================================================
 """
 
@@ -356,8 +355,6 @@ def main():
                                 if mise_2favori > 0:
                                     value_bets_2favori.append((cheval_2favori, cote_2favori, proba_2favori, ev_2favori, mise_2favori))
 
-        # --- v1.10-FAVORI : reutilise EXACTEMENT les candidats deja calcules par v1.10,
-        # ne garde que ceux ou le cheval est aussi le favori du marche (cote la plus basse) ---
         value_bets_v110favori = []
         if partants_avec_cote and value_bets_v110:
             cote_favori_marche = min(c for _, c in partants_avec_cote)
@@ -369,7 +366,6 @@ def main():
                     if mise_v110favori > 0:
                         value_bets_v110favori.append((cheval_v110, cote_v110, proba_v110, ev_v110, mise_v110favori, deferre_v110))
 
-        # --- Construction du message : respecte etat_pause.json, SANS detail des contributions ---
         sections_msg = []
         if value_bets_v14 and not etat_pause.get("v14", False):
             bloc = f"<b>Modele v1.4</b> (bankroll : {bankroll_v14:.0f}€) :\n"
@@ -436,27 +432,27 @@ def main():
             envoyer_telegram(msg)
 
         for cheval, cote, proba, ev, mise in value_bets_v14:
-            log_paris.append({"race_id": race_id, "modele": "v1.4", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+            log_paris.append({"race_id": race_id, "modele": "v1.4", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
         for cheval, cote, proba, ev, mise in value_bets_v14sire:
-            log_paris.append({"race_id": race_id, "modele": "v14sire", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+            log_paris.append({"race_id": race_id, "modele": "v14sire", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
         for cheval, cote, proba, ev, mise in value_bets_v15:
-            log_paris.append({"race_id": race_id, "modele": "v1.5", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+            log_paris.append({"race_id": race_id, "modele": "v1.5", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
         for cheval, cote, proba, ev, mise, d4 in value_bets_v18:
-            log_paris.append({"race_id": race_id, "modele": "v1.8", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+            log_paris.append({"race_id": race_id, "modele": "v1.8", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
         for cheval, cote, proba, ev, mise, d4 in value_bets_v110:
-            log_paris.append({"race_id": race_id, "modele": "v1.10", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+            log_paris.append({"race_id": race_id, "modele": "v1.10", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
         for cheval, cote, proba, ev, mise, d4 in value_bets_v110favori:
-            log_paris.append({"race_id": race_id, "modele": "v110favori", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+            log_paris.append({"race_id": race_id, "modele": "v110favori", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
         for cheval, proba, mise in value_bets_place:
-            log_paris.append({"race_id": race_id, "modele": "place", "cheval": cheval, "cote": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
+            log_paris.append({"race_id": race_id, "modele": "place", "cheval": cheval, "cote": "", "cote_cloture": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
         for chevaux, mise in value_bets_deux_sur_quatre:
-            log_paris.append({"race_id": race_id, "modele": "2sur4", "cheval": "|".join(chevaux), "cote": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
+            log_paris.append({"race_id": race_id, "modele": "2sur4", "cheval": "|".join(chevaux), "cote": "", "cote_cloture": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
         for chevaux, mise in value_bets_trio:
-            log_paris.append({"race_id": race_id, "modele": "trio", "cheval": "|".join(chevaux), "cote": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
+            log_paris.append({"race_id": race_id, "modele": "trio", "cheval": "|".join(chevaux), "cote": "", "cote_cloture": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
         for chevaux, mise, type_pari in value_bets_multi:
-            log_paris.append({"race_id": race_id, "modele": "multi", "cheval": "|".join(chevaux), "cote": type_pari, "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
+            log_paris.append({"race_id": race_id, "modele": "multi", "cheval": "|".join(chevaux), "cote": type_pari, "cote_cloture": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
         for cheval, cote, proba, ev, mise in value_bets_2favori:
-            log_paris.append({"race_id": race_id, "modele": "2favori", "cheval": cheval, "cote": cote, "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+            log_paris.append({"race_id": race_id, "modele": "2favori", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
 
         courses_notifiees[race_id] = {
             "date_notif": maintenant.isoformat(),
@@ -472,7 +468,7 @@ def main():
         import csv
         with open(chemin_log, "a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=[
-                "race_id", "modele", "cheval", "cote", "ev", "mise",
+                "race_id", "modele", "cheval", "cote", "cote_cloture", "ev", "mise",
                 "date_detection", "resultat", "gain_euros",
             ])
             if not existe:
