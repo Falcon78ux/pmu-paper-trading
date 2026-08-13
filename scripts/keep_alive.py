@@ -2,8 +2,8 @@
 =============================================================================
 KEEP_ALIVE.PY - Battement de coeur quotidien AVEC statistiques de performance
 =============================================================================
-11 modeles : v1.4, v1.4+Genealogie, v1.5, v1.8, v1.10, v1.10-Favori,
-place, 2sur4, trio, multi, 2favori.
+12 modeles : v1.4, v1.4-Favori, v1.4+Genealogie, v1.5, v1.8, v1.10,
+v1.10-Favori, place, 2sur4, trio, multi, 2favori.
 =============================================================================
 """
 
@@ -63,22 +63,22 @@ def main():
         nb_traites = sum(1 for l in lignes if l.get("resultat", "") != "")
         nb_en_attente = nb_paris_total - nb_traites
 
-        cles_modeles = ["v14", "v14sire", "v15", "v18", "v110", "v110favori", "place", "2sur4", "trio", "multi", "2favori"]
+        cles_modeles = ["v14", "v14favori", "v14sire", "v15", "v18", "v110", "v110favori", "place", "2sur4", "trio", "multi", "2favori"]
         bankrolls = {
             nom: charger_json(f"{RACINE}/bankroll_{nom}.json", {}).get("bankroll")
             for nom in cles_modeles
         }
 
         noms_affichage = {
-            "v14": "v1.4", "v14sire": "v1.4+Genealogie", "v15": "v1.5", "v18": "v1.8",
-            "v110": "v1.10", "v110favori": "v1.10-Favori",
+            "v14": "v1.4", "v14favori": "v1.4-Favori", "v14sire": "v1.4+Genealogie",
+            "v15": "v1.5", "v18": "v1.8", "v110": "v1.10", "v110favori": "v1.10-Favori",
             "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
             "2favori": "2favori",
         }
 
         cle_log = {
-            "v14": "v1.4", "v14sire": "v14sire", "v15": "v1.5", "v18": "v1.8",
-            "v110": "v1.10", "v110favori": "v110favori",
+            "v14": "v1.4", "v14favori": "v14favori", "v14sire": "v14sire",
+            "v15": "v1.5", "v18": "v1.8", "v110": "v1.10", "v110favori": "v110favori",
             "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
             "2favori": "2favori",
         }
