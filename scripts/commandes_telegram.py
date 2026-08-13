@@ -2,25 +2,9 @@
 =============================================================================
 COMMANDES_TELEGRAM.PY - Interroge et pilote le systeme via Telegram
 =============================================================================
-Interroge les nouveaux messages Telegram (via getUpdates) a chaque cycle,
-execute les commandes reconnues, repond directement dans Telegram.
-
-IMPORTANT : /pause et /reprendre ne touchent QUE les notifications
-Telegram. Les strategies continuent de calculer et de parier normalement
-en arriere-plan, quelle que soit la commande - seule la visibilite dans
-le chat est affectee.
-
-Delai de reponse : jusqu'a ~15 minutes (rythme du cron GitHub Actions).
-
-11 modeles : v14, v14sire, v15, v18, v110, v110favori, place, 2sur4,
+12 modeles : v14, v14favori (nouveau - reutilise v1.4, filtre favori,
+deploye le 13 aout), v14sire, v15, v18, v110, v110favori, place, 2sur4,
 trio, multi, 2favori.
-
-NOUVEAU (12 aout) : commande /clv - Closing Line Value moyen par
-modele (uniquement pour les 7 modeles sur le marche gagnant, qui ont
-une cote_cloture enregistree par verifier_resultats.py). Un CLV positif
-indique qu'on parie systematiquement a une meilleure cote que celle de
-fermeture des paris - signe d'edge reel, independant du resultat
-gagnant/perdant de chaque pari individuel.
 =============================================================================
 """
 
@@ -37,21 +21,23 @@ from commun import charger_json, sauvegarder_json, envoyer_telegram
 
 RACINE = os.path.join(os.path.dirname(__file__), "..")
 
-MODELES = ["v14", "v14sire", "v15", "v18", "v110", "v110favori", "place", "2sur4", "trio", "multi", "2favori"]
+MODELES = ["v14", "v14favori", "v14sire", "v15", "v18", "v110", "v110favori", "place", "2sur4", "trio", "multi", "2favori"]
 NOMS_AFFICHAGE = {
-    "v14": "v1.4", "v14sire": "v1.4+Genealogie", "v15": "v1.5", "v18": "v1.8",
-    "v110": "v1.10", "v110favori": "v1.10-Favori",
+    "v14": "v1.4", "v14favori": "v1.4-Favori", "v14sire": "v1.4+Genealogie",
+    "v15": "v1.5", "v18": "v1.8", "v110": "v1.10", "v110favori": "v1.10-Favori",
     "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
     "2favori": "2favori",
 }
 
-# Modeles sur le marche gagnant uniquement - seuls ceux-la ont une
-# cote_cloture enregistree (place/2sur4/trio/multi utilisent une mise
-# fixe sans cote directe comparable).
-MODELES_AVEC_CLV = ["v14", "v14sire", "v15", "v18", "v110", "v110favori", "2favori"]
+MODELES_AVEC_CLV = ["v14", "v14favori", "v14sire", "v15", "v18", "v110", "v110favori", "2favori"]
 
+# v14favori : meme modele/calcul que v1.4, teste le 13 aout avec le
+# systeme de paliers actuel : n=8654, ROI +27.89% (backtest, ancien
+# calcul plafond fixe) - reference conservee identique a v1.4-favori
+# original pour coherence avec le calcul deja documente.
 REFERENCE_BACKTEST = {
     "v14": {"n": 30984, "roi": 0.1075},
+    "v14favori": {"n": 8654, "roi": 0.2789},
     "v14sire": {"n": 30042, "roi": 0.1176},
     "v15": {"n": 31756, "roi": 0.1391},
     "v18": {"n": 34248, "roi": 0.1556},
@@ -66,7 +52,7 @@ REFERENCE_BACKTEST = {
 
 TEXTE_AIDE = (
     "<b>Commandes disponibles</b>\n\n"
-    "/bankroll — bankrolls actuelles des 11 strategies\n"
+    "/bankroll — bankrolls actuelles des 12 strategies\n"
     "/bilan — bilan du jour (gain, perte, ROI, nb paris)\n"
     "/bilan JJ/MM/AAAA — bilan d'une date precise\n"
     "/bilan cumule — bilan depuis le debut\n"
@@ -134,8 +120,6 @@ def calculer_stats_modele(lignes_csv, nom_modele):
 
 
 def normaliser_date(argument):
-    """Accepte JJMMAAAA, JJ/MM/AAAA, JJ-MM-AAAA, etc. - ne garde que les
-    chiffres et verifie qu'on obtient bien 8 caracteres."""
     chiffres = "".join(c for c in argument if c.isdigit())
     if len(chiffres) == 8:
         return chiffres
@@ -143,11 +127,10 @@ def normaliser_date(argument):
 
 
 def cle_log_modele(cle):
-    """Le nom stocke dans paris_virtuels.csv/journal_audit.csv differe
-    parfois de la cle interne - v14sire et v110favori sont stockes tels
-    quels (pas les noms d'affichage), les autres utilisent le nom
+    """v14favori, v14sire et v110favori sont stockes tels quels dans les
+    logs (pas les noms d'affichage), les autres utilisent le nom
     d'affichage."""
-    if cle in ("v14sire", "v110favori"):
+    if cle in ("v14favori", "v14sire", "v110favori"):
         return cle
     return NOMS_AFFICHAGE[cle]
 
@@ -247,10 +230,6 @@ def traiter_confiance():
 
 
 def traiter_clv():
-    """Closing Line Value moyen par modele - compare la cote a laquelle
-    on a parie a la cote de fermeture des paris. Positif = on a
-    systematiquement parie a de meilleures cotes que la fermeture,
-    signe d'edge reel independant du resultat gagnant/perdant."""
     chemin_log = f"{RACINE}/paris_virtuels.csv"
     if not os.path.exists(chemin_log):
         return "Aucun pari enregistre pour l'instant."
@@ -415,7 +394,6 @@ def main():
             envoyer_telegram(traiter_courses_non_jouees())
         elif commande == "/aide":
             envoyer_telegram(TEXTE_AIDE)
-        # commandes inconnues ignorees silencieusement
 
 
 if __name__ == "__main__":
