@@ -2,12 +2,9 @@
 =============================================================================
 VERIFIER_RESULTATS.PY - Compare aux resultats reels, met a jour l'historique
 =============================================================================
-NOUVEAU : capture la cote de cloture (dernierRapportDirect au moment de
-la resolution, deja interroge pour d'autres besoins) pour chaque pari
-individuel sur le marche gagnant, et calcule le CLV (Closing Line
-Value) = (cote_detection / cote_cloture) - 1. Un CLV positif indique
-que le marche s'est rapproche de notre estimation apres notre pari -
-signe d'edge reel, independant du resultat gagnant/perdant.
+NOUVEAU : v1.4-FAVORI ajoute, resolution standard marche gagnant
+identique a v1.4/v1.10-favori, bankroll separee, CLV capture comme
+les autres modeles sur marche gagnant.
 =============================================================================
 """
 
@@ -38,8 +35,6 @@ CHAMPS_AUDIT = [
     "top4_reel", "combinaison_rapport_brute", "cote_utilisee", "gain_calcule",
     "resultat", "coherence_verifiee", "detail_incoherence", "date_verif",
 ]
-
-MODELES_MARCHE_GAGNANT = {"v1.4", "v14sire", "v1.5", "v1.8", "v1.10", "v110favori", "2favori"}
 
 
 def recuperer_participants(date_str, num_reunion, num_course):
@@ -159,6 +154,7 @@ def main():
     plafond_ecart = constantes.get("plafond_ecart_speed_figure_ms", 8000)
 
     bankroll_v14, chemin_bankroll_v14 = get_bankroll(RACINE, "v14")
+    bankroll_v14favori, chemin_bankroll_v14favori = get_bankroll(RACINE, "v14favori")
     bankroll_v14sire, chemin_bankroll_v14sire = get_bankroll(RACINE, "v14sire")
     bankroll_v15, chemin_bankroll_v15 = get_bankroll(RACINE, "v15")
     bankroll_v18, chemin_bankroll_v18 = get_bankroll(RACINE, "v18")
@@ -178,7 +174,6 @@ def main():
     with open(chemin_log, "r", encoding="utf-8") as f:
         lignes = list(csv.DictReader(f))
 
-    # Assure la retro-compatibilite : les anciennes lignes n'ont pas cote_cloture
     for l in lignes:
         if "cote_cloture" not in l:
             l["cote_cloture"] = ""
@@ -468,7 +463,6 @@ def main():
             cote = float(l["cote"])
             mise = float(l.get("mise", 0) or 0)
 
-            # --- NOUVEAU : capture de la cote de cloture + calcul du CLV ---
             cote_cloture = extraire_cote_directe(participant_correspondant)
             clv_texte = ""
             if cote_cloture and cote_cloture > 1:
@@ -486,6 +480,10 @@ def main():
                 bankroll_v14 += gain_euros
                 bankroll_apres = bankroll_v14
                 cle_pause = "v14"
+            elif l["modele"] == "v14favori":
+                bankroll_v14favori += gain_euros
+                bankroll_apres = bankroll_v14favori
+                cle_pause = "v14favori"
             elif l["modele"] == "v14sire":
                 bankroll_v14sire += gain_euros
                 bankroll_apres = bankroll_v14sire
@@ -554,6 +552,7 @@ def main():
             writer.writerow(l)
 
     mettre_a_jour_bankroll(chemin_bankroll_v14, bankroll_v14)
+    mettre_a_jour_bankroll(chemin_bankroll_v14favori, bankroll_v14favori)
     mettre_a_jour_bankroll(chemin_bankroll_v14sire, bankroll_v14sire)
     mettre_a_jour_bankroll(chemin_bankroll_v15, bankroll_v15)
     mettre_a_jour_bankroll(chemin_bankroll_v18, bankroll_v18)
