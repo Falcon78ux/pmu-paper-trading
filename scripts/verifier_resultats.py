@@ -2,8 +2,12 @@
 =============================================================================
 VERIFIER_RESULTATS.PY - Compare aux resultats reels, met a jour l'historique
 =============================================================================
-v1.10-FAVORI ajoute : resolution standard marche gagnant, identique a
-v1.10 (meme mecanique gagnant/perdant), bankroll separee.
+NOUVEAU : capture la cote de cloture (dernierRapportDirect au moment de
+la resolution, deja interroge pour d'autres besoins) pour chaque pari
+individuel sur le marche gagnant, et calcule le CLV (Closing Line
+Value) = (cote_detection / cote_cloture) - 1. Un CLV positif indique
+que le marche s'est rapproche de notre estimation apres notre pari -
+signe d'edge reel, independant du resultat gagnant/perdant.
 =============================================================================
 """
 
@@ -19,7 +23,7 @@ from commun import (
     charger_json, sauvegarder_json, envoyer_telegram,
     maj_driver, maj_hippodrome, maj_cheval, maj_cheval_corde,
     maj_dernier_rang, maj_sire_forme, charger_table_pedigree,
-    get_bankroll, mettre_a_jour_bankroll,
+    get_bankroll, mettre_a_jour_bankroll, extraire_cote_directe,
 )
 
 RACINE = os.path.join(os.path.dirname(__file__), "..")
@@ -34,6 +38,8 @@ CHAMPS_AUDIT = [
     "top4_reel", "combinaison_rapport_brute", "cote_utilisee", "gain_calcule",
     "resultat", "coherence_verifiee", "detail_incoherence", "date_verif",
 ]
+
+MODELES_MARCHE_GAGNANT = {"v1.4", "v14sire", "v1.5", "v1.8", "v1.10", "v110favori", "2favori"}
 
 
 def recuperer_participants(date_str, num_reunion, num_course):
@@ -171,6 +177,11 @@ def main():
 
     with open(chemin_log, "r", encoding="utf-8") as f:
         lignes = list(csv.DictReader(f))
+
+    # Assure la retro-compatibilite : les anciennes lignes n'ont pas cote_cloture
+    for l in lignes:
+        if "cote_cloture" not in l:
+            l["cote_cloture"] = ""
 
     races_en_attente = sorted(set(
         l["race_id"] for l in lignes if l.get("resultat", "") == ""
@@ -457,6 +468,16 @@ def main():
             cote = float(l["cote"])
             mise = float(l.get("mise", 0) or 0)
 
+            # --- NOUVEAU : capture de la cote de cloture + calcul du CLV ---
+            cote_cloture = extraire_cote_directe(participant_correspondant)
+            clv_texte = ""
+            if cote_cloture and cote_cloture > 1:
+                l["cote_cloture"] = f"{cote_cloture:.2f}"
+                clv = (cote / cote_cloture) - 1
+                clv_texte = f" | CLV {clv:+.1%}"
+            else:
+                l["cote_cloture"] = ""
+
             gain_euros = mise * (cote - 1) if gagnant else -mise
             l["resultat"] = "GAGNANT" if gagnant else "PERDANT"
             l["gain_euros"] = f"{gain_euros:.2f}"
@@ -513,7 +534,7 @@ def main():
                 emoji = "✅" if gagnant else "❌"
                 lignes_message.append(
                     f"{emoji} [{l['modele']}] {cheval_parie} (cote {cote:.1f}, mise {mise:.2f}€) "
-                    f"— gain {gain_euros:+.2f}€ | bankroll {l['modele']} : {bankroll_apres:.2f}€"
+                    f"— gain {gain_euros:+.2f}€{clv_texte} | bankroll {l['modele']} : {bankroll_apres:.2f}€"
                 )
 
         if lignes_message:
@@ -525,7 +546,7 @@ def main():
 
     with open(chemin_log, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=[
-            "race_id", "modele", "cheval", "cote", "ev", "mise",
+            "race_id", "modele", "cheval", "cote", "cote_cloture", "ev", "mise",
             "date_detection", "resultat", "gain_euros",
         ])
         writer.writeheader()
@@ -552,7 +573,6 @@ def main():
     sauvegarder_json(f"{RACINE}/etat_sire_forme.json", etat_sire_forme)
 
     print(f"{len(courses_traitees_ce_run)} courses traitees dans ce run.")
-    print(f"v1.4:{bankroll_v14:.2f} v14sire:{bankroll_v14sire:.2f} v1.5:{bankroll_v15:.2f} v1.8:{bankroll_v18:.2f} v1.10:{bankroll_v110:.2f} v110favori:{bankroll_v110favori:.2f} place:{bankroll_place:.2f} 2sur4:{bankroll_2sur4:.2f} trio:{bankroll_trio:.2f} multi:{bankroll_multi:.2f} 2favori:{bankroll_2favori:.2f}")
 
 
 if __name__ == "__main__":
