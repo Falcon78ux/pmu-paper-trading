@@ -12,9 +12,15 @@ le chat est affectee.
 
 Delai de reponse : jusqu'a ~15 minutes (rythme du cron GitHub Actions).
 
-10 modeles maintenant : v14, v14sire (nouveau - v1.4 + genealogie du
-pere, deploye le 9 aout), v15, v18, v110, place, 2sur4, trio, multi,
-2favori.
+11 modeles : v14, v14sire, v15, v18, v110, v110favori, place, 2sur4,
+trio, multi, 2favori.
+
+NOUVEAU (12 aout) : commande /clv - Closing Line Value moyen par
+modele (uniquement pour les 7 modeles sur le marche gagnant, qui ont
+une cote_cloture enregistree par verifier_resultats.py). Un CLV positif
+indique qu'on parie systematiquement a une meilleure cote que celle de
+fermeture des paris - signe d'edge reel, independant du resultat
+gagnant/perdant de chaque pari individuel.
 =============================================================================
 """
 
@@ -31,22 +37,26 @@ from commun import charger_json, sauvegarder_json, envoyer_telegram
 
 RACINE = os.path.join(os.path.dirname(__file__), "..")
 
-MODELES = ["v14", "v14sire", "v15", "v18", "v110", "place", "2sur4", "trio", "multi", "2favori"]
+MODELES = ["v14", "v14sire", "v15", "v18", "v110", "v110favori", "place", "2sur4", "trio", "multi", "2favori"]
 NOMS_AFFICHAGE = {
-    "v14": "v1.4", "v14sire": "v1.4+Genealogie", "v15": "v1.5", "v18": "v1.8", "v110": "v1.10",
+    "v14": "v1.4", "v14sire": "v1.4+Genealogie", "v15": "v1.5", "v18": "v1.8",
+    "v110": "v1.10", "v110favori": "v1.10-Favori",
     "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
     "2favori": "2favori",
 }
 
-# Reference backtest (walk-forward, flat-bet) pour chaque modele.
-# v14sire : v1.4 + sire_forme (genealogie), 30042 paris, ROI +11.76%
-# (walk-forward complet, teste le 9 aout).
+# Modeles sur le marche gagnant uniquement - seuls ceux-la ont une
+# cote_cloture enregistree (place/2sur4/trio/multi utilisent une mise
+# fixe sans cote directe comparable).
+MODELES_AVEC_CLV = ["v14", "v14sire", "v15", "v18", "v110", "v110favori", "2favori"]
+
 REFERENCE_BACKTEST = {
     "v14": {"n": 30984, "roi": 0.1075},
     "v14sire": {"n": 30042, "roi": 0.1176},
     "v15": {"n": 31756, "roi": 0.1391},
     "v18": {"n": 34248, "roi": 0.1556},
     "v110": {"n": 34379, "roi": 0.1879},
+    "v110favori": {"n": 7590, "roi": 0.3584},
     "place": {"n": 16635, "roi": 0.233},
     "2sur4": {"n": 10312, "roi": 0.838},
     "trio": {"n": 14993, "roi": 1.358},
@@ -56,11 +66,12 @@ REFERENCE_BACKTEST = {
 
 TEXTE_AIDE = (
     "<b>Commandes disponibles</b>\n\n"
-    "/bankroll — bankrolls actuelles des 10 strategies\n"
+    "/bankroll — bankrolls actuelles des 11 strategies\n"
     "/bilan — bilan du jour (gain, perte, ROI, nb paris)\n"
     "/bilan JJ/MM/AAAA — bilan d'une date precise\n"
     "/bilan cumule — bilan depuis le debut\n"
     "/confiance — estimation combinee backtest+direct, par modele\n"
+    "/clv — Closing Line Value moyen par modele (edge vs marche)\n"
     "/pause [strategie|tout] — coupe les notifications (le pari continue en arriere-plan)\n"
     "/reprendre [strategie|tout] — reactive les notifications\n"
     "/courses_restantes — courses de trot pas encore parties aujourd'hui\n"
@@ -133,10 +144,11 @@ def normaliser_date(argument):
 
 def cle_log_modele(cle):
     """Le nom stocke dans paris_virtuels.csv/journal_audit.csv differe
-    parfois de la cle interne - v14sire est stocke tel quel (pas
-    'v1.4+Genealogie'), les autres utilisent le nom d'affichage."""
-    if cle == "v14sire":
-        return "v14sire"
+    parfois de la cle interne - v14sire et v110favori sont stockes tels
+    quels (pas les noms d'affichage), les autres utilisent le nom
+    d'affichage."""
+    if cle in ("v14sire", "v110favori"):
+        return cle
     return NOMS_AFFICHAGE[cle]
 
 
@@ -230,6 +242,62 @@ def traiter_confiance():
             )
         else:
             msg += f"<b>{nom}</b>\nBacktest : {roi_bt:+.1%} (n={n_bt})\nAucun pari en direct pour l'instant.\n\n"
+
+    return msg
+
+
+def traiter_clv():
+    """Closing Line Value moyen par modele - compare la cote a laquelle
+    on a parie a la cote de fermeture des paris. Positif = on a
+    systematiquement parie a de meilleures cotes que la fermeture,
+    signe d'edge reel independant du resultat gagnant/perdant."""
+    chemin_log = f"{RACINE}/paris_virtuels.csv"
+    if not os.path.exists(chemin_log):
+        return "Aucun pari enregistre pour l'instant."
+    with open(chemin_log, "r", encoding="utf-8") as f:
+        lignes_csv = list(csv.DictReader(f))
+
+    msg = "📈 <b>Closing Line Value (CLV) moyen par modele</b>\n\n"
+    msg += "<i>Compare la cote au moment du pari a la cote de fermeture. Positif = on parie systematiquement a de meilleures cotes que le marche final - signe d'edge reel.</i>\n\n"
+
+    au_moins_une_donnee = False
+    for cle in MODELES_AVEC_CLV:
+        nom = NOMS_AFFICHAGE[cle]
+        nom_log = cle_log_modele(cle)
+        sous = [
+            l for l in lignes_csv
+            if l.get("modele") == nom_log and l.get("resultat", "") != ""
+            and l.get("cote_cloture", "") not in ("", None)
+        ]
+        if not sous:
+            msg += f"<b>{nom}</b>\nPas encore de donnees CLV.\n\n"
+            continue
+
+        au_moins_une_donnee = True
+        clv_valeurs = []
+        for l in sous:
+            try:
+                cote_detection = float(l["cote"])
+                cote_cloture = float(l["cote_cloture"])
+                if cote_cloture > 0:
+                    clv_valeurs.append((cote_detection / cote_cloture) - 1)
+            except (ValueError, ZeroDivisionError):
+                continue
+
+        if not clv_valeurs:
+            msg += f"<b>{nom}</b>\nPas encore de donnees CLV exploitables.\n\n"
+            continue
+
+        clv_moyen = sum(clv_valeurs) / len(clv_valeurs)
+        pct_positif = sum(1 for v in clv_valeurs if v > 0) / len(clv_valeurs)
+        msg += (
+            f"<b>{nom}</b>\n"
+            f"CLV moyen : {clv_moyen:+.2%} (n={len(clv_valeurs)})\n"
+            f"Paris qui battent la cloture : {pct_positif:.1%}\n\n"
+        )
+
+    if not au_moins_une_donnee:
+        msg += "\nAucune donnee CLV disponible pour l'instant - se remplit au fur et a mesure des resolutions de paris depuis le 12 aout."
 
     return msg
 
@@ -329,6 +397,8 @@ def main():
             envoyer_telegram(traiter_bilan(argument))
         elif commande == "/confiance":
             envoyer_telegram(traiter_confiance())
+        elif commande == "/clv":
+            envoyer_telegram(traiter_clv())
         elif commande == "/pause":
             if not argument:
                 envoyer_telegram("Precise une strategie ou 'tout'. Ex : /pause trio")
