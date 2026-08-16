@@ -2,9 +2,13 @@
 =============================================================================
 VERIFIER_RESULTATS.PY - Compare aux resultats reels, met a jour l'historique
 =============================================================================
-NOUVEAU : v1.4-FAVORI ajoute, resolution standard marche gagnant
-identique a v1.4/v1.10-favori, bankroll separee, CLV capture comme
-les autres modeles sur marche gagnant.
+CORRECTION (15 aout) : bug identifie - pour 2sur4/trio/multi, si le
+pari est GAGNANT (chevaux bien classes) mais que la cote/rapport n'a
+pas pu etre extraite (rapports-definitifs incomplets ou type de pari
+non propose sur cette course), le code comptait a tort une PERTE
+(-mise) tout en affichant "GAGNANT" et un check vert. Corrige : dans
+ce cas precis, le pari est laisse EN ATTENTE (non resolu ce cycle-ci)
+plutot que faussement compte comme perdant.
 =============================================================================
 """
 
@@ -299,6 +303,12 @@ def main():
                 chevaux_paries = l["cheval"].split("|")
                 rangs = [rang_par_nom.get(c) for c in chevaux_paries]
                 a_gagne = all(r is not None and r <= 4 for r in rangs)
+
+                # CORRECTION : gagnant mais cote introuvable -> laisse en attente,
+                # ne compte PAS une fausse perte. Sera retente au cycle suivant.
+                if a_gagne and not cote_2sur4:
+                    continue
+
                 mise = float(l.get("mise", 0) or 0)
                 gain_euros = mise * (cote_2sur4 - 1) if a_gagne and cote_2sur4 else -mise
                 l["resultat"] = "GAGNANT" if a_gagne else "PERDANT"
@@ -323,8 +333,8 @@ def main():
                 })
 
                 if not etat_pause.get("2sur4", False):
-                    emoji = "✅" if a_gagne else "❌"
-                    lignes_message.append(f"{emoji} [2sur4] {' + '.join(chevaux_paries)} (mise {mise:.2f}€) — gain {gain_euros:+.2f}€ | bankroll 2sur4 : {bankroll_2sur4:.2f}€")
+                    emoji = "OK" if a_gagne else "X"
+                    lignes_message.append(f"{emoji} [2sur4] {' + '.join(chevaux_paries)} (mise {mise:.2f}EUR) - gain {gain_euros:+.2f}EUR | bankroll 2sur4 : {bankroll_2sur4:.2f}EUR")
                 continue
 
             if l["modele"] == "trio":
@@ -351,6 +361,11 @@ def main():
                 except Exception:
                     continue
                 a_gagne = ensemble_parie == trio_reel_ensemble
+
+                # CORRECTION : meme protection defensive que 2sur4, au cas ou
+                if a_gagne and not trio_reel_cote:
+                    continue
+
                 mise = float(l.get("mise", 0) or 0)
                 gain_euros = mise * (trio_reel_cote - 1) if a_gagne else -mise
                 l["resultat"] = "GAGNANT" if a_gagne else "PERDANT"
@@ -374,8 +389,8 @@ def main():
                 })
 
                 if not etat_pause.get("trio", False):
-                    emoji = "✅" if a_gagne else "❌"
-                    lignes_message.append(f"{emoji} [trio] {' + '.join(chevaux_paries)} (mise {mise:.2f}€) — gain {gain_euros:+.2f}€ | bankroll trio : {bankroll_trio:.2f}€")
+                    emoji = "OK" if a_gagne else "X"
+                    lignes_message.append(f"{emoji} [trio] {' + '.join(chevaux_paries)} (mise {mise:.2f}EUR) - gain {gain_euros:+.2f}EUR | bankroll trio : {bankroll_trio:.2f}EUR")
                 continue
 
             if l["modele"] == "multi":
@@ -392,6 +407,11 @@ def main():
                     continue
                 a_gagne = ensemble_parie == top4_reel
                 cote_multi = extraire_cote_multi(rapports_data, type_pari_multi) if rapports_data else None
+
+                # CORRECTION : meme protection que 2sur4 - c'est le meme bug possible ici
+                if a_gagne and not cote_multi:
+                    continue
+
                 mise = float(l.get("mise", 0) or 0)
                 gain_euros = mise * (cote_multi - 1) if a_gagne and cote_multi else -mise
                 l["resultat"] = "GAGNANT" if a_gagne else "PERDANT"
@@ -415,8 +435,8 @@ def main():
                 })
 
                 if not etat_pause.get("multi", False):
-                    emoji = "✅" if a_gagne else "❌"
-                    lignes_message.append(f"{emoji} [{type_pari_multi.lower()}] {' + '.join(chevaux_paries)} (mise {mise:.2f}€) — gain {gain_euros:+.2f}€ | bankroll multi : {bankroll_multi:.2f}€")
+                    emoji = "OK" if a_gagne else "X"
+                    lignes_message.append(f"{emoji} [{type_pari_multi.lower()}] {' + '.join(chevaux_paries)} (mise {mise:.2f}EUR) - gain {gain_euros:+.2f}EUR | bankroll multi : {bankroll_multi:.2f}EUR")
                 continue
 
             cheval_parie = l["cheval"]
@@ -455,8 +475,8 @@ def main():
                 })
 
                 if not etat_pause.get("place", False):
-                    emoji = "✅" if a_place else "❌"
-                    lignes_message.append(f"{emoji} [place] {cheval_parie} (mise {mise:.2f}€) — gain {gain_euros:+.2f}€ | bankroll place : {bankroll_place:.2f}€")
+                    emoji = "OK" if a_place else "X"
+                    lignes_message.append(f"{emoji} [place] {cheval_parie} (mise {mise:.2f}EUR) - gain {gain_euros:+.2f}EUR | bankroll place : {bankroll_place:.2f}EUR")
                 continue
 
             gagnant = rang_reel == 1
@@ -529,14 +549,14 @@ def main():
             })
 
             if not (cle_pause and etat_pause.get(cle_pause, False)):
-                emoji = "✅" if gagnant else "❌"
+                emoji = "OK" if gagnant else "X"
                 lignes_message.append(
-                    f"{emoji} [{l['modele']}] {cheval_parie} (cote {cote:.1f}, mise {mise:.2f}€) "
-                    f"— gain {gain_euros:+.2f}€{clv_texte} | bankroll {l['modele']} : {bankroll_apres:.2f}€"
+                    f"{emoji} [{l['modele']}] {cheval_parie} (cote {cote:.1f}, mise {mise:.2f}EUR) "
+                    f"- gain {gain_euros:+.2f}EUR{clv_texte} | bankroll {l['modele']} : {bankroll_apres:.2f}EUR"
                 )
 
         if lignes_message:
-            msg = f"🏁 <b>Resultat course {race_id}</b>\n\n" + "\n".join(lignes_message)
+            msg = f"Resultat course {race_id}\n\n" + "\n".join(lignes_message)
             envoyer_telegram(msg)
 
         if not course_combine_incomplete:
@@ -581,5 +601,5 @@ if __name__ == "__main__":
         import traceback
         detail = traceback.format_exc()[-500:]
         detail_echappe = detail.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        envoyer_telegram(f"🔴 <b>Erreur dans verifier_resultats.py</b>\n\n{e}\n\n<code>{detail_echappe}</code>")
+        envoyer_telegram(f"Erreur dans verifier_resultats.py\n\n{e}\n\n{detail_echappe}")
         raise
