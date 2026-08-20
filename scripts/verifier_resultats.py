@@ -2,13 +2,14 @@
 =============================================================================
 VERIFIER_RESULTATS.PY - Compare aux resultats reels, met a jour l'historique
 =============================================================================
-CORRECTION (15 aout) : bug identifie - pour 2sur4/trio/multi, si le
-pari est GAGNANT (chevaux bien classes) mais que la cote/rapport n'a
-pas pu etre extraite (rapports-definitifs incomplets ou type de pari
-non propose sur cette course), le code comptait a tort une PERTE
-(-mise) tout en affichant "GAGNANT" et un check vert. Corrige : dans
-ce cas precis, le pari est laisse EN ATTENTE (non resolu ce cycle-ci)
-plutot que faussement compte comme perdant.
+NOUVEAU (20 aout) : v14dutch et v110dutch (dutching) ajoutes. Chaque
+opportunite dutching genere DEUX lignes dans paris_virtuels.csv (meme
+race_id, meme modele) - une pour l'outsider, une pour le favori. La
+logique de resolution standard du marche gagnant (deja en place, gere
+n'importe quel nombre de lignes par modele/course) les traite
+correctement sans code special : chaque jambe est evaluee selon si SON
+cheval a gagne, et les deux gains/pertes s'additionnent naturellement
+dans la meme bankroll.
 =============================================================================
 """
 
@@ -158,11 +159,13 @@ def main():
     plafond_ecart = constantes.get("plafond_ecart_speed_figure_ms", 8000)
 
     bankroll_v14, chemin_bankroll_v14 = get_bankroll(RACINE, "v14")
+    bankroll_v14dutch, chemin_bankroll_v14dutch = get_bankroll(RACINE, "v14dutch")
     bankroll_v14favori, chemin_bankroll_v14favori = get_bankroll(RACINE, "v14favori")
     bankroll_v14sire, chemin_bankroll_v14sire = get_bankroll(RACINE, "v14sire")
     bankroll_v15, chemin_bankroll_v15 = get_bankroll(RACINE, "v15")
     bankroll_v18, chemin_bankroll_v18 = get_bankroll(RACINE, "v18")
     bankroll_v110, chemin_bankroll_v110 = get_bankroll(RACINE, "v110")
+    bankroll_v110dutch, chemin_bankroll_v110dutch = get_bankroll(RACINE, "v110dutch")
     bankroll_v110favori, chemin_bankroll_v110favori = get_bankroll(RACINE, "v110favori")
     bankroll_place, chemin_bankroll_place = get_bankroll(RACINE, "place")
     bankroll_2sur4, chemin_bankroll_2sur4 = get_bankroll(RACINE, "2sur4")
@@ -304,8 +307,6 @@ def main():
                 rangs = [rang_par_nom.get(c) for c in chevaux_paries]
                 a_gagne = all(r is not None and r <= 4 for r in rangs)
 
-                # CORRECTION : gagnant mais cote introuvable -> laisse en attente,
-                # ne compte PAS une fausse perte. Sera retente au cycle suivant.
                 if a_gagne and not cote_2sur4:
                     continue
 
@@ -362,7 +363,6 @@ def main():
                     continue
                 a_gagne = ensemble_parie == trio_reel_ensemble
 
-                # CORRECTION : meme protection defensive que 2sur4, au cas ou
                 if a_gagne and not trio_reel_cote:
                     continue
 
@@ -408,7 +408,6 @@ def main():
                 a_gagne = ensemble_parie == top4_reel
                 cote_multi = extraire_cote_multi(rapports_data, type_pari_multi) if rapports_data else None
 
-                # CORRECTION : meme protection que 2sur4 - c'est le meme bug possible ici
                 if a_gagne and not cote_multi:
                     continue
 
@@ -500,6 +499,10 @@ def main():
                 bankroll_v14 += gain_euros
                 bankroll_apres = bankroll_v14
                 cle_pause = "v14"
+            elif l["modele"] == "v14dutch":
+                bankroll_v14dutch += gain_euros
+                bankroll_apres = bankroll_v14dutch
+                cle_pause = "v14dutch"
             elif l["modele"] == "v14favori":
                 bankroll_v14favori += gain_euros
                 bankroll_apres = bankroll_v14favori
@@ -520,6 +523,10 @@ def main():
                 bankroll_v110 += gain_euros
                 bankroll_apres = bankroll_v110
                 cle_pause = "v110"
+            elif l["modele"] == "v110dutch":
+                bankroll_v110dutch += gain_euros
+                bankroll_apres = bankroll_v110dutch
+                cle_pause = "v110dutch"
             elif l["modele"] == "v110favori":
                 bankroll_v110favori += gain_euros
                 bankroll_apres = bankroll_v110favori
@@ -572,11 +579,13 @@ def main():
             writer.writerow(l)
 
     mettre_a_jour_bankroll(chemin_bankroll_v14, bankroll_v14)
+    mettre_a_jour_bankroll(chemin_bankroll_v14dutch, bankroll_v14dutch)
     mettre_a_jour_bankroll(chemin_bankroll_v14favori, bankroll_v14favori)
     mettre_a_jour_bankroll(chemin_bankroll_v14sire, bankroll_v14sire)
     mettre_a_jour_bankroll(chemin_bankroll_v15, bankroll_v15)
     mettre_a_jour_bankroll(chemin_bankroll_v18, bankroll_v18)
     mettre_a_jour_bankroll(chemin_bankroll_v110, bankroll_v110)
+    mettre_a_jour_bankroll(chemin_bankroll_v110dutch, bankroll_v110dutch)
     mettre_a_jour_bankroll(chemin_bankroll_v110favori, bankroll_v110favori)
     mettre_a_jour_bankroll(chemin_bankroll_place, bankroll_place)
     mettre_a_jour_bankroll(chemin_bankroll_2sur4, bankroll_2sur4)
