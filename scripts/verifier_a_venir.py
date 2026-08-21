@@ -2,16 +2,16 @@
 =============================================================================
 VERIFIER_A_VENIR.PY - Detecte les value bets avant chaque course
 =============================================================================
-15 strategies en parallele. NOUVEAU (21 aout) : couple_harville - pour
-chaque course, prend les 2 chevaux avec la plus forte probabilite
-individuelle selon v1.10 (calculee pour TOUS les chevaux, pas
-seulement les value bets EV>10%), parie sur cette paire au COUPLE
-GAGNANT (mise fixe, comme place/2sur4/trio/multi - pas de cote
-pre-course disponible pour calculer un Kelly). Valide en backtest :
-n=15980, taux de reussite 17.80%, ROI +67.57%/pari, gain compose
-+500.6%/an, drawdown 12.8%, stable sur 3 annees completes (2024-2026).
-Version simple (top-2 par probabilite individuelle) - la vraie formule
-de Harville sur toutes les paires possibles reste a tester plus tard.
+16 strategies en parallele. NOUVEAU (21 aout) : consensus_place -
+reutilise le calcul deja existant de value_bets_v110 (cible gagnant) ET
+candidats_place (cible place, top pick) - garde uniquement les cas ou
+le MEME cheval est simultanement value bet gagnant v1.10 ET le meilleur
+choix du modele place. Deux cibles d'entrainement differentes = vrai
+signal independant, pas juste un autre seuil. Valide en backtest :
+n=7811, taux de reussite 35.1% (contre 19.1% pour v1.10 seul), ROI
++37.38%/pari, gain compose +1311.4%/an, drawdown 17.7% (contre 24.0%
+pour v1.10 seul - meilleur profil de risque, meme si croissance brute
+inferieure au v1.10 sans filtre).
 =============================================================================
 """
 
@@ -135,6 +135,7 @@ def main():
     bankroll_multi, chemin_bankroll_multi = get_bankroll(RACINE, "multi")
     bankroll_2favori, chemin_bankroll_2favori = get_bankroll(RACINE, "2favori")
     bankroll_couple_harville, chemin_bankroll_couple_harville = get_bankroll(RACINE, "couple_harville")
+    bankroll_consensus_place, chemin_bankroll_consensus_place = get_bankroll(RACINE, "consensus_place")
 
     try:
         courses = recuperer_programme_du_jour(date_str)
@@ -180,7 +181,7 @@ def main():
         value_bets_v18 = []
         value_bets_v110 = []
         candidats_place = []
-        toutes_probas_v110 = []  # NOUVEAU : pour couple_harville - TOUS les chevaux, pas seulement EV>10%
+        toutes_probas_v110 = []
 
         partants_avec_cote = []
 
@@ -326,9 +327,11 @@ def main():
             })
 
         value_bets_place = []
+        meilleur_pick_place = None
         if candidats_place:
             meilleur = max(candidats_place, key=lambda x: x[1])
             cheval_place, proba_place_choisi, _ = meilleur
+            meilleur_pick_place = cheval_place
             mise_place = calculer_mise_place()
             value_bets_place.append((cheval_place, proba_place_choisi, mise_place))
 
@@ -443,18 +446,28 @@ def main():
                         dutch_v110 = resultat
                         break
 
-        # --- NOUVEAU : COUPLE HARVILLE (top-2 par probabilite individuelle v1.10) ---
         couple_harville_pick = None
         if len(toutes_probas_v110) >= 2:
             tries = sorted(toutes_probas_v110, key=lambda x: x[2], reverse=True)
             cheval_1, num_pmu_1, proba_1 = tries[0]
             cheval_2, num_pmu_2, proba_2 = tries[1]
-            mise_couple = calculer_mise_place()  # mise fixe, meme mecanisme que place/2sur4/trio/multi
+            mise_couple = calculer_mise_place()
             couple_harville_pick = {
                 "cheval_1": cheval_1, "num_pmu_1": num_pmu_1,
                 "cheval_2": cheval_2, "num_pmu_2": num_pmu_2,
                 "mise": mise_couple,
             }
+
+        # --- NOUVEAU : CONSENSUS_PLACE (v1.10 gagnant ET place d'accord sur le meme cheval) ---
+        consensus_place_pick = None
+        if meilleur_pick_place is not None and value_bets_v110:
+            for item in value_bets_v110:
+                cheval_v110, cote_v110, proba_v110, ev_v110, deferre_v110 = item[0], item[1], item[2], item[3], item[5]
+                if cheval_v110 == meilleur_pick_place:
+                    mise_consensus = calculer_mise_v110(proba_v110, cote_v110, bankroll_consensus_place, deferre_v110)
+                    if mise_consensus > 0:
+                        consensus_place_pick = (cheval_v110, cote_v110, proba_v110, ev_v110, mise_consensus)
+                    break
 
         sections_msg = []
         if value_bets_v14 and not etat_pause.get("v14", False):
@@ -503,6 +516,11 @@ def main():
             bloc = f"<b>Modele v1.10-FAVORI</b> (bankroll : {bankroll_v110favori:.0f}EUR) :\n"
             for cheval, cote, proba, ev, mise, d4 in value_bets_v110favori:
                 bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}EUR</b>\n"
+            sections_msg.append(bloc)
+        if consensus_place_pick and not etat_pause.get("consensus_place", False):
+            cheval, cote, proba, ev, mise = consensus_place_pick
+            bloc = f"<b>Modele CONSENSUS-PLACE</b> (bankroll : {bankroll_consensus_place:.0f}EUR) :\n"
+            bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}EUR</b>\n"
             sections_msg.append(bloc)
         if couple_harville_pick and not etat_pause.get("couple_harville", False):
             bloc = f"<b>Modele COUPLE-HARVILLE</b> (bankroll : {bankroll_couple_harville:.0f}EUR) :\n"
@@ -560,6 +578,9 @@ def main():
             log_paris.append({"race_id": race_id, "modele": "v110dutch", "cheval": dutch_v110["cheval_favori"], "cote": dutch_v110["cote_favori"], "cote_cloture": "", "ev": "", "mise": dutch_v110["mise_favori"], "date_detection": maintenant.isoformat()})
         for cheval, cote, proba, ev, mise, d4 in value_bets_v110favori:
             log_paris.append({"race_id": race_id, "modele": "v110favori", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+        if consensus_place_pick:
+            cheval, cote, proba, ev, mise = consensus_place_pick
+            log_paris.append({"race_id": race_id, "modele": "consensus_place", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
         if couple_harville_pick:
             chevaux_str = f"{couple_harville_pick['cheval_1']}|{couple_harville_pick['cheval_2']}"
             nums_str = f"{couple_harville_pick['num_pmu_1']}-{couple_harville_pick['num_pmu_2']}"
