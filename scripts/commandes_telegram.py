@@ -2,8 +2,9 @@
 =============================================================================
 COMMANDES_TELEGRAM.PY - Interroge et pilote le systeme via Telegram
 =============================================================================
-14 modeles : v14, v14dutch (NOUVEAU 20 aout - dutching outsider/favori),
-v14favori, v14sire, v15, v18, v110, v110dutch (NOUVEAU), v110favori,
+15 modeles : v14, v14dutch, v14favori, v14sire, v15, v18, v110,
+v110dutch, v110favori, couple_harville (NOUVEAU 21 aout - couple
+gagnant sur le top-2 par probabilite individuelle v1.10, mise fixe),
 place, 2sur4, trio, multi, 2favori.
 =============================================================================
 """
@@ -25,6 +26,7 @@ MODELES = [
     "v14", "v14dutch", "v14favori", "v14sire",
     "v15", "v18",
     "v110", "v110dutch", "v110favori",
+    "couple_harville",
     "place", "2sur4", "trio", "multi", "2favori",
 ]
 NOMS_AFFICHAGE = {
@@ -32,6 +34,7 @@ NOMS_AFFICHAGE = {
     "v14sire": "v1.4+Genealogie",
     "v15": "v1.5", "v18": "v1.8",
     "v110": "v1.10", "v110dutch": "v1.10-Dutch", "v110favori": "v1.10-Favori",
+    "couple_harville": "Couple-Harville",
     "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
     "2favori": "2favori",
 }
@@ -43,15 +46,13 @@ MODELES_AVEC_CLV = [
     "2favori",
 ]
 
-# v14dutch/v110dutch : reference backtest du dutching (couverture d'un
-# value bet outsider cote>=8 par le favori du marche). n = nombre
-# d'OPPORTUNITES de dutching detectees (chaque opportunite genere 2
-# lignes de paris en production - outsider + favori). ROI = rendement
-# moyen par opportunite (mise totale des 2 jambes combinees), teste le
-# 20 aout sur walk-forward complet, valide sur v1.4 ET v1.10
-# independamment, robuste (sans les 10 meilleurs paris, sensibilite au
-# seuil). v14dutch : figure approximative, pas de ROI/pari exact isole
-# du test (seul le gain compose complet a ete mesure precisement).
+# couple_harville : top-2 par probabilite individuelle v1.10 (version
+# simple, pas la vraie formule de Harville sur toutes les paires -
+# affinement prevu plus tard). Teste le 21 aout sur walk-forward
+# complet (2024-2026) : n=15980, taux de reussite 17.80%, ROI/pari
+# +67.57%, stable sur les 3 annees completes. Robustesse : ROI recule a
+# +49.90% sans les 50 meilleurs paris (queue de distribution plus
+# lourde que le dutching, a garder en tete).
 REFERENCE_BACKTEST = {
     "v14": {"n": 30984, "roi": 0.1075},
     "v14dutch": {"n": 7386, "roi": 0.30},
@@ -62,6 +63,7 @@ REFERENCE_BACKTEST = {
     "v110": {"n": 34379, "roi": 0.1879},
     "v110dutch": {"n": 14873, "roi": 0.2319},
     "v110favori": {"n": 7590, "roi": 0.3584},
+    "couple_harville": {"n": 15980, "roi": 0.6757},
     "place": {"n": 16635, "roi": 0.233},
     "2sur4": {"n": 10312, "roi": 0.838},
     "trio": {"n": 14993, "roi": 1.358},
@@ -71,7 +73,7 @@ REFERENCE_BACKTEST = {
 
 TEXTE_AIDE = (
     "<b>Commandes disponibles</b>\n\n"
-    "/bankroll — bankrolls actuelles des 14 strategies\n"
+    "/bankroll — bankrolls actuelles des 15 strategies\n"
     "/bilan — bilan du jour (gain, perte, ROI, nb paris)\n"
     "/bilan JJ/MM/AAAA — bilan d'une date precise\n"
     "/bilan cumule — bilan depuis le debut\n"
@@ -146,10 +148,10 @@ def normaliser_date(argument):
 
 
 def cle_log_modele(cle):
-    """v14dutch, v14favori, v14sire et v110dutch, v110favori sont
-    stockes tels quels dans les logs (pas les noms d'affichage), les
-    autres utilisent le nom d'affichage."""
-    if cle in ("v14dutch", "v14favori", "v14sire", "v110dutch", "v110favori"):
+    """v14dutch, v14favori, v14sire, v110dutch, v110favori et
+    couple_harville sont stockes tels quels dans les logs (pas les
+    noms d'affichage), les autres utilisent le nom d'affichage."""
+    if cle in ("v14dutch", "v14favori", "v14sire", "v110dutch", "v110favori", "couple_harville"):
         return cle
     return NOMS_AFFICHAGE[cle]
 
