@@ -2,11 +2,12 @@
 =============================================================================
 VERIFIER_RESULTATS.PY - Compare aux resultats reels, met a jour l'historique
 =============================================================================
-NOUVEAU (21 aout) : couple_harville - resolution via le rapport
-COUPLE_GAGNANT (ou COUPLE_ORDRE pour les anciennes courses, PMU a
-change la nomenclature a un moment dans l'historique). Le champ "cote"
-du log stocke temporairement "num_pmu_1-num_pmu_2" (nos numeros PMU
-choisis), compare a la combinaison gagnante reelle.
+NOUVEAU (21 aout) : consensus_place ajoute - resolution standard marche
+gagnant identique a v1.4/v1.10 (aucune nouvelle logique necessaire).
+Emojis restaures (✅/❌) suite a une demande explicite - le remplacement
+par OK/X du 15 aout etait une precaution suite a l'incident de
+troncature, plus necessaire maintenant que la discipline de
+verification systematique des fichiers est en place.
 =============================================================================
 """
 
@@ -127,9 +128,6 @@ def extraire_cote_multi(data, type_pari):
 
 
 def extraire_couple_gagnant(data):
-    """Extrait la combinaison gagnante et le dividende du COUPLE
-    GAGNANT. Gere les deux nomenclatures rencontrees dans l'historique
-    (COUPLE_GAGNANT recent, COUPLE_ORDRE plus ancien)."""
     for pari in data:
         type_pari = pari.get("typePari", "")
         if type_pari not in ("COUPLE_GAGNANT", "COUPLE_ORDRE"):
@@ -194,6 +192,7 @@ def main():
     bankroll_multi, chemin_bankroll_multi = get_bankroll(RACINE, "multi")
     bankroll_2favori, chemin_bankroll_2favori = get_bankroll(RACINE, "2favori")
     bankroll_couple_harville, chemin_bankroll_couple_harville = get_bankroll(RACINE, "couple_harville")
+    bankroll_consensus_place, chemin_bankroll_consensus_place = get_bankroll(RACINE, "consensus_place")
 
     chemin_log = f"{RACINE}/paris_virtuels.csv"
     if not os.path.exists(chemin_log):
@@ -365,8 +364,8 @@ def main():
                 })
 
                 if not etat_pause.get("couple_harville", False):
-                    emoji = "OK" if a_gagne else "X"
-                    lignes_message.append(f"{emoji} [couple_harville] {' + '.join(chevaux_paries)} (mise {mise:.2f}EUR) - gain {gain_euros:+.2f}EUR | bankroll couple_harville : {bankroll_couple_harville:.2f}EUR")
+                    emoji = "✅" if a_gagne else "❌"
+                    lignes_message.append(f"{emoji} [couple_harville] {' + '.join(chevaux_paries)} (mise {mise:.2f}EUR) — gain {gain_euros:+.2f}EUR | bankroll couple_harville : {bankroll_couple_harville:.2f}EUR")
                 continue
 
             if l["modele"] == "2sur4":
@@ -403,8 +402,8 @@ def main():
                 })
 
                 if not etat_pause.get("2sur4", False):
-                    emoji = "OK" if a_gagne else "X"
-                    lignes_message.append(f"{emoji} [2sur4] {' + '.join(chevaux_paries)} (mise {mise:.2f}EUR) - gain {gain_euros:+.2f}EUR | bankroll 2sur4 : {bankroll_2sur4:.2f}EUR")
+                    emoji = "✅" if a_gagne else "❌"
+                    lignes_message.append(f"{emoji} [2sur4] {' + '.join(chevaux_paries)} (mise {mise:.2f}EUR) — gain {gain_euros:+.2f}EUR | bankroll 2sur4 : {bankroll_2sur4:.2f}EUR")
                 continue
 
             if l["modele"] == "trio":
@@ -458,8 +457,8 @@ def main():
                 })
 
                 if not etat_pause.get("trio", False):
-                    emoji = "OK" if a_gagne else "X"
-                    lignes_message.append(f"{emoji} [trio] {' + '.join(chevaux_paries)} (mise {mise:.2f}EUR) - gain {gain_euros:+.2f}EUR | bankroll trio : {bankroll_trio:.2f}EUR")
+                    emoji = "✅" if a_gagne else "❌"
+                    lignes_message.append(f"{emoji} [trio] {' + '.join(chevaux_paries)} (mise {mise:.2f}EUR) — gain {gain_euros:+.2f}EUR | bankroll trio : {bankroll_trio:.2f}EUR")
                 continue
 
             if l["modele"] == "multi":
@@ -503,8 +502,8 @@ def main():
                 })
 
                 if not etat_pause.get("multi", False):
-                    emoji = "OK" if a_gagne else "X"
-                    lignes_message.append(f"{emoji} [{type_pari_multi.lower()}] {' + '.join(chevaux_paries)} (mise {mise:.2f}EUR) - gain {gain_euros:+.2f}EUR | bankroll multi : {bankroll_multi:.2f}EUR")
+                    emoji = "✅" if a_gagne else "❌"
+                    lignes_message.append(f"{emoji} [{type_pari_multi.lower()}] {' + '.join(chevaux_paries)} (mise {mise:.2f}EUR) — gain {gain_euros:+.2f}EUR | bankroll multi : {bankroll_multi:.2f}EUR")
                 continue
 
             cheval_parie = l["cheval"]
@@ -543,8 +542,8 @@ def main():
                 })
 
                 if not etat_pause.get("place", False):
-                    emoji = "OK" if a_place else "X"
-                    lignes_message.append(f"{emoji} [place] {cheval_parie} (mise {mise:.2f}EUR) - gain {gain_euros:+.2f}EUR | bankroll place : {bankroll_place:.2f}EUR")
+                    emoji = "✅" if a_place else "❌"
+                    lignes_message.append(f"{emoji} [place] {cheval_parie} (mise {mise:.2f}EUR) — gain {gain_euros:+.2f}EUR | bankroll place : {bankroll_place:.2f}EUR")
                 continue
 
             gagnant = rang_reel == 1
@@ -600,6 +599,10 @@ def main():
                 bankroll_v110favori += gain_euros
                 bankroll_apres = bankroll_v110favori
                 cle_pause = "v110favori"
+            elif l["modele"] == "consensus_place":
+                bankroll_consensus_place += gain_euros
+                bankroll_apres = bankroll_consensus_place
+                cle_pause = "consensus_place"
             elif l["modele"] == "2favori":
                 bankroll_2favori += gain_euros
                 bankroll_apres = bankroll_2favori
@@ -625,14 +628,14 @@ def main():
             })
 
             if not (cle_pause and etat_pause.get(cle_pause, False)):
-                emoji = "OK" if gagnant else "X"
+                emoji = "✅" if gagnant else "❌"
                 lignes_message.append(
                     f"{emoji} [{l['modele']}] {cheval_parie} (cote {cote:.1f}, mise {mise:.2f}EUR) "
-                    f"- gain {gain_euros:+.2f}EUR{clv_texte} | bankroll {l['modele']} : {bankroll_apres:.2f}EUR"
+                    f"— gain {gain_euros:+.2f}EUR{clv_texte} | bankroll {l['modele']} : {bankroll_apres:.2f}EUR"
                 )
 
         if lignes_message:
-            msg = f"Resultat course {race_id}\n\n" + "\n".join(lignes_message)
+            msg = f"🏁 Resultat course {race_id}\n\n" + "\n".join(lignes_message)
             envoyer_telegram(msg)
 
         if not course_combine_incomplete:
@@ -662,6 +665,7 @@ def main():
     mettre_a_jour_bankroll(chemin_bankroll_multi, bankroll_multi)
     mettre_a_jour_bankroll(chemin_bankroll_2favori, bankroll_2favori)
     mettre_a_jour_bankroll(chemin_bankroll_couple_harville, bankroll_couple_harville)
+    mettre_a_jour_bankroll(chemin_bankroll_consensus_place, bankroll_consensus_place)
 
     sauvegarder_json(f"{RACINE}/etat_drivers.json", etat_drivers)
     sauvegarder_json(f"{RACINE}/etat_hippodromes.json", etat_hippodromes)
@@ -680,5 +684,5 @@ if __name__ == "__main__":
         import traceback
         detail = traceback.format_exc()[-500:]
         detail_echappe = detail.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        envoyer_telegram(f"Erreur dans verifier_resultats.py\n\n{e}\n\n{detail_echappe}")
+        envoyer_telegram(f"🔴 Erreur dans verifier_resultats.py\n\n{e}\n\n{detail_echappe}")
         raise
