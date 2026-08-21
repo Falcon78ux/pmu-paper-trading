@@ -2,10 +2,10 @@
 =============================================================================
 COMMANDES_TELEGRAM.PY - Interroge et pilote le systeme via Telegram
 =============================================================================
-15 modeles : v14, v14dutch, v14favori, v14sire, v15, v18, v110,
-v110dutch, v110favori, couple_harville (NOUVEAU 21 aout - couple
-gagnant sur le top-2 par probabilite individuelle v1.10, mise fixe),
-place, 2sur4, trio, multi, 2favori.
+16 modeles : v14, v14dutch, v14favori, v14sire, v15, v18, v110,
+v110dutch, v110favori, consensus_place (NOUVEAU 21 aout - v1.10 ET
+place d'accord sur le meme cheval, deux cibles d'entrainement
+differentes), couple_harville, place, 2sur4, trio, multi, 2favori.
 =============================================================================
 """
 
@@ -26,7 +26,7 @@ MODELES = [
     "v14", "v14dutch", "v14favori", "v14sire",
     "v15", "v18",
     "v110", "v110dutch", "v110favori",
-    "couple_harville",
+    "consensus_place", "couple_harville",
     "place", "2sur4", "trio", "multi", "2favori",
 ]
 NOMS_AFFICHAGE = {
@@ -34,7 +34,7 @@ NOMS_AFFICHAGE = {
     "v14sire": "v1.4+Genealogie",
     "v15": "v1.5", "v18": "v1.8",
     "v110": "v1.10", "v110dutch": "v1.10-Dutch", "v110favori": "v1.10-Favori",
-    "couple_harville": "Couple-Harville",
+    "consensus_place": "Consensus-Place", "couple_harville": "Couple-Harville",
     "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
     "2favori": "2favori",
 }
@@ -43,16 +43,17 @@ MODELES_AVEC_CLV = [
     "v14", "v14dutch", "v14favori", "v14sire",
     "v15", "v18",
     "v110", "v110dutch", "v110favori",
+    "consensus_place",
     "2favori",
 ]
 
-# couple_harville : top-2 par probabilite individuelle v1.10 (version
-# simple, pas la vraie formule de Harville sur toutes les paires -
-# affinement prevu plus tard). Teste le 21 aout sur walk-forward
-# complet (2024-2026) : n=15980, taux de reussite 17.80%, ROI/pari
-# +67.57%, stable sur les 3 annees completes. Robustesse : ROI recule a
-# +49.90% sans les 50 meilleurs paris (queue de distribution plus
-# lourde que le dutching, a garder en tete).
+# consensus_place : v1.10 (cible gagnant) ET modele place (cible place,
+# top pick) d'accord sur le meme cheval - deux cibles d'entrainement
+# differentes, signal le plus fort trouve dans ce projet (taux de
+# victoire 35.1% contre 19.1% pour v1.10 seul). Teste le 21 aout sur
+# walk-forward complet : n=7811, ROI +37.38%/pari, gain compose
+# +1311.4%/an, drawdown 17.7% (meilleur profil de risque que v1.10 seul
+# a 24.0%, meme si croissance brute inferieure).
 REFERENCE_BACKTEST = {
     "v14": {"n": 30984, "roi": 0.1075},
     "v14dutch": {"n": 7386, "roi": 0.30},
@@ -63,6 +64,7 @@ REFERENCE_BACKTEST = {
     "v110": {"n": 34379, "roi": 0.1879},
     "v110dutch": {"n": 14873, "roi": 0.2319},
     "v110favori": {"n": 7590, "roi": 0.3584},
+    "consensus_place": {"n": 7811, "roi": 0.3738},
     "couple_harville": {"n": 15980, "roi": 0.6757},
     "place": {"n": 16635, "roi": 0.233},
     "2sur4": {"n": 10312, "roi": 0.838},
@@ -73,7 +75,7 @@ REFERENCE_BACKTEST = {
 
 TEXTE_AIDE = (
     "<b>Commandes disponibles</b>\n\n"
-    "/bankroll — bankrolls actuelles des 15 strategies\n"
+    "/bankroll — bankrolls actuelles des 16 strategies\n"
     "/bilan — bilan du jour (gain, perte, ROI, nb paris)\n"
     "/bilan JJ/MM/AAAA — bilan d'une date precise\n"
     "/bilan cumule — bilan depuis le debut\n"
@@ -116,13 +118,13 @@ def recuperer_nouveaux_messages():
 
 
 def traiter_bankroll():
-    lignes = ["Bankrolls actuelles\n"]
+    lignes = ["💰 <b>Bankrolls actuelles</b>\n"]
     for cle in MODELES:
         bankroll = charger_json(f"{RACINE}/bankroll_{cle}.json", {}).get("bankroll")
         nom = NOMS_AFFICHAGE[cle]
         if bankroll is not None:
             variation = bankroll - 1236
-            lignes.append(f"{nom} : {bankroll:.2f}EUR ({variation:+.2f}EUR)")
+            lignes.append(f"{nom} : {bankroll:.2f}€ ({variation:+.2f}€)")
         else:
             lignes.append(f"{nom} : pas encore initialisee")
     return "\n".join(lignes)
@@ -148,10 +150,11 @@ def normaliser_date(argument):
 
 
 def cle_log_modele(cle):
-    """v14dutch, v14favori, v14sire, v110dutch, v110favori et
-    couple_harville sont stockes tels quels dans les logs (pas les
-    noms d'affichage), les autres utilisent le nom d'affichage."""
-    if cle in ("v14dutch", "v14favori", "v14sire", "v110dutch", "v110favori", "couple_harville"):
+    """v14dutch, v14favori, v14sire, v110dutch, v110favori,
+    consensus_place et couple_harville sont stockes tels quels dans
+    les logs (pas les noms d'affichage), les autres utilisent le nom
+    d'affichage."""
+    if cle in ("v14dutch", "v14favori", "v14sire", "v110dutch", "v110favori", "consensus_place", "couple_harville"):
         return cle
     return NOMS_AFFICHAGE[cle]
 
@@ -176,17 +179,17 @@ def traiter_bilan(argument):
         lignes_filtrees = [l for l in lignes_csv if l.get("race_id", "").startswith(aujourd_hui)]
         titre = "Bilan du jour"
 
-    msg = f"{titre}\n\n"
+    msg = f"📊 <b>{titre}</b>\n\n"
     gain_total_global = 0.0
     perte_total_global = 0.0
     nb_total_global = 0
     for cle in MODELES:
         nom = NOMS_AFFICHAGE[cle]
         stats = calculer_stats_modele(lignes_filtrees, cle_log_modele(cle))
-        msg += f"{nom}\n"
+        msg += f"<b>{nom}</b>\n"
         if stats:
             msg += f"{stats['nb']} paris, {stats['taux']:.1%} reussite\n"
-            msg += f"Gain net : {stats['gain']:+.2f}EUR (ROI {stats['roi']:+.1%})\n\n"
+            msg += f"Gain net : {stats['gain']:+.2f}€ (ROI {stats['roi']:+.1%})\n\n"
             nb_total_global += stats["nb"]
             if stats["gain"] >= 0:
                 gain_total_global += stats["gain"]
@@ -196,8 +199,8 @@ def traiter_bilan(argument):
             msg += "Aucun pari.\n\n"
 
     msg += (
-        f"Total : {nb_total_global} paris | "
-        f"gains {gain_total_global:+.2f}EUR | pertes {perte_total_global:+.2f}EUR"
+        f"<b>Total</b> : {nb_total_global} paris | "
+        f"gains {gain_total_global:+.2f}€ | pertes {perte_total_global:+.2f}€"
     )
     return msg
 
@@ -209,7 +212,7 @@ def traiter_confiance():
         with open(chemin_log, "r", encoding="utf-8") as f:
             lignes_csv = list(csv.DictReader(f))
 
-    msg = "Estimation combinee (backtest + direct)\n\n"
+    msg = "🔬 <b>Estimation combinee (backtest + direct)</b>\n\n"
     for cle in MODELES:
         nom = NOMS_AFFICHAGE[cle]
         ref = REFERENCE_BACKTEST[cle]
@@ -235,17 +238,17 @@ def traiter_confiance():
                 erreur_type = ecart_type / ((n_bt + n_direct) ** 0.5)
                 ic_bas = roi_combine - 1.96 * erreur_type
                 ic_haut = roi_combine + 1.96 * erreur_type
-                ic_texte = f" IC95%~[{ic_bas:+.1%},{ic_haut:+.1%}]"
+                ic_texte = f" IC95%≈[{ic_bas:+.1%},{ic_haut:+.1%}]"
 
             msg += (
-                f"{nom}\n"
+                f"<b>{nom}</b>\n"
                 f"Backtest : {roi_bt:+.1%} (n={n_bt})\n"
                 f"Direct : {roi_direct:+.1%} (n={n_direct})\n"
-                f"Combine : {roi_combine:+.1%}{ic_texte}\n"
+                f"<b>Combine : {roi_combine:+.1%}</b>{ic_texte}\n"
                 f"(poids du direct : {poids_direct:.1%})\n\n"
             )
         else:
-            msg += f"{nom}\nBacktest : {roi_bt:+.1%} (n={n_bt})\nAucun pari en direct pour l'instant.\n\n"
+            msg += f"<b>{nom}</b>\nBacktest : {roi_bt:+.1%} (n={n_bt})\nAucun pari en direct pour l'instant.\n\n"
 
     return msg
 
@@ -257,8 +260,8 @@ def traiter_clv():
     with open(chemin_log, "r", encoding="utf-8") as f:
         lignes_csv = list(csv.DictReader(f))
 
-    msg = "Closing Line Value (CLV) moyen par modele\n\n"
-    msg += "Compare la cote au moment du pari a la cote de fermeture. Positif = on parie systematiquement a de meilleures cotes que le marche final.\n\n"
+    msg = "📈 <b>Closing Line Value (CLV) moyen par modele</b>\n\n"
+    msg += "<i>Compare la cote au moment du pari a la cote de fermeture. Positif = on parie systematiquement a de meilleures cotes que le marche final.</i>\n\n"
 
     au_moins_une_donnee = False
     for cle in MODELES_AVEC_CLV:
@@ -270,7 +273,7 @@ def traiter_clv():
             and l.get("cote_cloture", "") not in ("", None)
         ]
         if not sous:
-            msg += f"{nom}\nPas encore de donnees CLV.\n\n"
+            msg += f"<b>{nom}</b>\nPas encore de donnees CLV.\n\n"
             continue
 
         au_moins_une_donnee = True
@@ -285,13 +288,13 @@ def traiter_clv():
                 continue
 
         if not clv_valeurs:
-            msg += f"{nom}\nPas encore de donnees CLV exploitables.\n\n"
+            msg += f"<b>{nom}</b>\nPas encore de donnees CLV exploitables.\n\n"
             continue
 
         clv_moyen = sum(clv_valeurs) / len(clv_valeurs)
         pct_positif = sum(1 for v in clv_valeurs if v > 0) / len(clv_valeurs)
         msg += (
-            f"{nom}\n"
+            f"<b>{nom}</b>\n"
             f"CLV moyen : {clv_moyen:+.2%} (n={len(clv_valeurs)})\n"
             f"Paris qui battent la cloture : {pct_positif:.1%}\n\n"
         )
@@ -325,7 +328,7 @@ def traiter_pause(argument, mettre_en_pause):
     sauvegarder_json(f"{RACINE}/etat_pause.json", etat_pause)
     action = "mises en pause" if mettre_en_pause else "reactivees"
     return (
-        f"Notifications {action} pour : {cibles}\n\n"
+        f"🔕 Notifications {action} pour : {cibles}\n\n"
         "(Les strategies continuent de parier normalement en arriere-plan "
         "- seules les notifications Telegram sont affectees.)"
     )
@@ -354,11 +357,11 @@ def traiter_courses_restantes():
             heure_depart = datetime.fromtimestamp(heure_ms / 1000, tz=timezone.utc)
             if heure_depart > maintenant:
                 num_course = course.get("numOrdre", course.get("numExterne"))
-                courses_restantes.append(f"R{num_reunion}C{num_course} {hippodrome} - {heure_depart.strftime('%Hh%M')} UTC")
+                courses_restantes.append(f"R{num_reunion}C{num_course} {hippodrome} — {heure_depart.strftime('%Hh%M')} UTC")
 
     if not courses_restantes:
         return "Aucune course de trot restante aujourd'hui."
-    return f"{len(courses_restantes)} courses restantes aujourd'hui\n\n" + "\n".join(courses_restantes)
+    return f"🐎 <b>{len(courses_restantes)} courses restantes aujourd'hui</b>\n\n" + "\n".join(courses_restantes)
 
 
 def traiter_courses_non_jouees():
@@ -381,7 +384,7 @@ def traiter_courses_non_jouees():
 
     if not non_jouees:
         return "Toutes les courses traitees aujourd'hui ont genere au moins un pari."
-    return f"{len(non_jouees)} courses sans aucun pari aujourd'hui\n\n" + "\n".join(non_jouees)
+    return f"🔍 <b>{len(non_jouees)} courses sans aucun pari aujourd'hui</b>\n\n" + "\n".join(non_jouees)
 
 
 def main():
@@ -424,5 +427,5 @@ if __name__ == "__main__":
         import traceback
         detail = traceback.format_exc()[-500:]
         detail_echappe = detail.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        envoyer_telegram(f"Erreur dans commandes_telegram.py\n\n{e}\n\n{detail_echappe}")
+        envoyer_telegram(f"🔴 Erreur dans commandes_telegram.py\n\n{e}\n\n{detail_echappe}")
         raise
