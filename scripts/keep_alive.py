@@ -2,12 +2,9 @@
 =============================================================================
 KEEP_ALIVE.PY - Battement de coeur quotidien AVEC statistiques de performance
 =============================================================================
-Deux roles :
-1. Envoie un message Telegram UNE FOIS PAR JOUR avec un vrai bilan de
-   performance (ROI, taux de victoire, gains par modele) - pas juste une
-   confirmation que le systeme tourne.
-2. Met a jour dernier_run.json a CHAQUE execution (anti-desactivation
-   GitHub apres 60 jours d'inactivite).
+15 modeles : v1.4, v1.4-Dutch, v1.4-Favori, v1.4+Genealogie, v1.5,
+v1.8, v1.10, v1.10-Dutch, v1.10-Favori, Couple-Harville, place, 2sur4,
+trio, multi, 2favori.
 =============================================================================
 """
 
@@ -21,18 +18,16 @@ from commun import charger_json, sauvegarder_json, envoyer_telegram
 
 RACINE = os.path.join(os.path.dirname(__file__), "..")
 
-HEURE_HEARTBEAT = 8  # heure UTC a laquelle envoyer le message quotidien
+HEURE_HEARTBEAT = 8
 
 
 def calculer_stats_modele(lignes, nom_modele):
-    """Calcule ROI, taux de victoire, gains pour un modele donne, a partir
-    des lignes deja traitees (resultat non vide) de paris_virtuels.csv."""
     sous_ensemble = [l for l in lignes if l.get("modele") == nom_modele and l.get("resultat", "") != ""]
     if not sous_ensemble:
         return None
 
     nb_paris = len(sous_ensemble)
-    nb_gagnants = sum(1 for l in sous_ensemble if l.get("resultat") == "GAGNANT")
+    nb_gagnants = sum(1 for l in sous_ensemble if l.get("resultat") in ("GAGNANT", "PLACE"))
     taux_victoire = nb_gagnants / nb_paris if nb_paris > 0 else 0
 
     mise_totale = sum(float(l.get("mise", 0) or 0) for l in sous_ensemble)
@@ -52,11 +47,9 @@ def main():
     maintenant = datetime.now(timezone.utc)
     aujourd_hui = maintenant.strftime("%Y-%m-%d")
 
-    # --- 1. Preuve de vie, a chaque execution ---
     dernier_run = {"derniere_execution_utc": maintenant.isoformat()}
     sauvegarder_json(f"{RACINE}/dernier_run.json", dernier_run)
 
-    # --- 2. Heartbeat Telegram avec statistiques, une fois par jour ---
     etat_heartbeat = charger_json(f"{RACINE}/dernier_heartbeat.json", {})
     dernier_jour_envoye = etat_heartbeat.get("dernier_jour")
 
@@ -71,31 +64,57 @@ def main():
         nb_traites = sum(1 for l in lignes if l.get("resultat", "") != "")
         nb_en_attente = nb_paris_total - nb_traites
 
-        bankroll_v14 = charger_json(f"{RACINE}/bankroll_v14.json", {}).get("bankroll")
-        bankroll_v15 = charger_json(f"{RACINE}/bankroll_v15.json", {}).get("bankroll")
-        bankroll_v18 = charger_json(f"{RACINE}/bankroll_v18.json", {}).get("bankroll")
+        cles_modeles = [
+            "v14", "v14dutch", "v14favori", "v14sire",
+            "v15", "v18",
+            "v110", "v110dutch", "v110favori",
+            "couple_harville",
+            "place", "2sur4", "trio", "multi", "2favori",
+        ]
+        bankrolls = {
+            nom: charger_json(f"{RACINE}/bankroll_{nom}.json", {}).get("bankroll")
+            for nom in cles_modeles
+        }
 
-        stats_v14 = calculer_stats_modele(lignes, "v1.4")
-        stats_v15 = calculer_stats_modele(lignes, "v1.5")
-        stats_v18 = calculer_stats_modele(lignes, "v1.8")
+        noms_affichage = {
+            "v14": "v1.4", "v14dutch": "v1.4-Dutch", "v14favori": "v1.4-Favori",
+            "v14sire": "v1.4+Genealogie",
+            "v15": "v1.5", "v18": "v1.8",
+            "v110": "v1.10", "v110dutch": "v1.10-Dutch", "v110favori": "v1.10-Favori",
+            "couple_harville": "Couple-Harville",
+            "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
+            "2favori": "2favori",
+        }
+
+        cle_log = {
+            "v14": "v1.4", "v14dutch": "v14dutch", "v14favori": "v14favori", "v14sire": "v14sire",
+            "v15": "v1.5", "v18": "v1.8",
+            "v110": "v1.10", "v110dutch": "v110dutch", "v110favori": "v110favori",
+            "couple_harville": "couple_harville",
+            "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
+            "2favori": "2favori",
+        }
 
         etat_drivers = charger_json(f"{RACINE}/etat_drivers.json", {})
         etat_hippodromes = charger_json(f"{RACINE}/etat_hippodromes.json", {})
 
-        msg = f"\U0001F4CA <b>Bilan quotidien</b> \u2014 {maintenant.strftime('%d/%m/%Y %H:%M')} UTC\n\n"
+        msg = f"Bilan quotidien - {maintenant.strftime('%d/%m/%Y %H:%M')} UTC\n\n"
         msg += f"Paris logues : {nb_paris_total} ({nb_traites} traites, {nb_en_attente} en attente)\n\n"
 
-        for nom, stats, bankroll in [("v1.4", stats_v14, bankroll_v14), ("v1.5", stats_v15, bankroll_v15), ("v1.8", stats_v18, bankroll_v18)]:
-            msg += f"<b>{nom}</b>\n"
+        for cle in cles_modeles:
+            nom_affiche = noms_affichage[cle]
+            stats = calculer_stats_modele(lignes, cle_log[cle])
+            bankroll = bankrolls[cle]
+            msg += f"{nom_affiche}\n"
             if bankroll is not None:
                 variation = bankroll - 1236
-                msg += f"Bankroll : {bankroll:.2f}€ ({variation:+.2f}€)\n"
+                msg += f"Bankroll : {bankroll:.2f}EUR ({variation:+.2f}EUR)\n"
             if stats:
                 msg += (
                     f"{stats['nb_paris']} paris traites, "
-                    f"{stats['taux_victoire']:.1%} de victoires\n"
-                    f"Mise totale : {stats['mise_totale']:.2f}€, "
-                    f"gain net : {stats['gain_total']:+.2f}€ "
+                    f"{stats['taux_victoire']:.1%} de reussite\n"
+                    f"Mise totale : {stats['mise_totale']:.2f}EUR, "
+                    f"gain net : {stats['gain_total']:+.2f}EUR "
                     f"(ROI {stats['roi']:+.1%})\n"
                 )
             else:
