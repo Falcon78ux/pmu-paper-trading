@@ -2,9 +2,9 @@
 =============================================================================
 KEEP_ALIVE.PY - Battement de coeur quotidien AVEC statistiques de performance
 =============================================================================
-15 modeles : v1.4, v1.4-Dutch, v1.4-Favori, v1.4+Genealogie, v1.5,
-v1.8, v1.10, v1.10-Dutch, v1.10-Favori, Couple-Harville, place, 2sur4,
-trio, multi, 2favori.
+16 modeles : v1.4, v1.4-Dutch, v1.4-Favori, v1.4+Genealogie, v1.5,
+v1.8, v1.10, v1.10-Dutch, v1.10-Favori, Consensus-Place, Couple-Harville,
+place, 2sur4, trio, multi, 2favori.
 =============================================================================
 """
 
@@ -68,7 +68,7 @@ def main():
             "v14", "v14dutch", "v14favori", "v14sire",
             "v15", "v18",
             "v110", "v110dutch", "v110favori",
-            "couple_harville",
+            "consensus_place", "couple_harville",
             "place", "2sur4", "trio", "multi", "2favori",
         ]
         bankrolls = {
@@ -81,7 +81,7 @@ def main():
             "v14sire": "v1.4+Genealogie",
             "v15": "v1.5", "v18": "v1.8",
             "v110": "v1.10", "v110dutch": "v1.10-Dutch", "v110favori": "v1.10-Favori",
-            "couple_harville": "Couple-Harville",
+            "consensus_place": "Consensus-Place", "couple_harville": "Couple-Harville",
             "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
             "2favori": "2favori",
         }
@@ -90,7 +90,7 @@ def main():
             "v14": "v1.4", "v14dutch": "v14dutch", "v14favori": "v14favori", "v14sire": "v14sire",
             "v15": "v1.5", "v18": "v1.8",
             "v110": "v1.10", "v110dutch": "v110dutch", "v110favori": "v110favori",
-            "couple_harville": "couple_harville",
+            "consensus_place": "consensus_place", "couple_harville": "couple_harville",
             "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
             "2favori": "2favori",
         }
@@ -98,23 +98,23 @@ def main():
         etat_drivers = charger_json(f"{RACINE}/etat_drivers.json", {})
         etat_hippodromes = charger_json(f"{RACINE}/etat_hippodromes.json", {})
 
-        msg = f"Bilan quotidien - {maintenant.strftime('%d/%m/%Y %H:%M')} UTC\n\n"
+        msg = f"📊 <b>Bilan quotidien</b> — {maintenant.strftime('%d/%m/%Y %H:%M')} UTC\n\n"
         msg += f"Paris logues : {nb_paris_total} ({nb_traites} traites, {nb_en_attente} en attente)\n\n"
 
         for cle in cles_modeles:
             nom_affiche = noms_affichage[cle]
             stats = calculer_stats_modele(lignes, cle_log[cle])
             bankroll = bankrolls[cle]
-            msg += f"{nom_affiche}\n"
+            msg += f"<b>{nom_affiche}</b>\n"
             if bankroll is not None:
                 variation = bankroll - 1236
-                msg += f"Bankroll : {bankroll:.2f}EUR ({variation:+.2f}EUR)\n"
+                msg += f"Bankroll : {bankroll:.2f}€ ({variation:+.2f}€)\n"
             if stats:
                 msg += (
                     f"{stats['nb_paris']} paris traites, "
                     f"{stats['taux_victoire']:.1%} de reussite\n"
-                    f"Mise totale : {stats['mise_totale']:.2f}EUR, "
-                    f"gain net : {stats['gain_total']:+.2f}EUR "
+                    f"Mise totale : {stats['mise_totale']:.2f}€, "
+                    f"gain net : {stats['gain_total']:+.2f}€ "
                     f"(ROI {stats['roi']:+.1%})\n"
                 )
             else:
