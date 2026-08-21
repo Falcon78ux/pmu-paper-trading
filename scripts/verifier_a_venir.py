@@ -2,16 +2,16 @@
 =============================================================================
 VERIFIER_A_VENIR.PY - Detecte les value bets avant chaque course
 =============================================================================
-14 strategies en parallele. NOUVEAU (20 aout) : v14dutch et v110dutch -
-DUTCHING. Quand v1.4 ou v1.10 detecte un value bet sur un OUTSIDER
-(cote>=8), calcule une mise complementaire sur le FAVORI DU MARCHE de
-la meme course, de sorte que le gain soit egal si l'un OU l'autre
-gagne. Valide en backtest sur v1.10 (+961.0%/an, drawdown 12.0%,
-Calmar 79.9 contre 29.1 pour l'outsider seul) et v1.4 (+65.6%/an,
-drawdown 6.7%, Calmar 9.8 contre 1.4). Logue DEUX paris par
-opportunite detectee (meme race_id, meme modele, bankroll partagee) -
-la resolution standard (deja geree par verifier_resultats.py) les
-traite correctement sans code special.
+15 strategies en parallele. NOUVEAU (21 aout) : couple_harville - pour
+chaque course, prend les 2 chevaux avec la plus forte probabilite
+individuelle selon v1.10 (calculee pour TOUS les chevaux, pas
+seulement les value bets EV>10%), parie sur cette paire au COUPLE
+GAGNANT (mise fixe, comme place/2sur4/trio/multi - pas de cote
+pre-course disponible pour calculer un Kelly). Valide en backtest :
+n=15980, taux de reussite 17.80%, ROI +67.57%/pari, gain compose
++500.6%/an, drawdown 12.8%, stable sur 3 annees completes (2024-2026).
+Version simple (top-2 par probabilite individuelle) - la vraie formule
+de Harville sur toutes les paires possibles reste a tester plus tard.
 =============================================================================
 """
 
@@ -82,10 +82,6 @@ def recuperer_participants(date_str, num_reunion, num_course):
 def calculer_dutching(cheval_outsider, cote_outsider, proba_outsider, ev_outsider,
                        cheval_favori, cote_favori, bankroll_dutch,
                        fonction_mise, *args_fonction_mise):
-    """Calcule la repartition de mise entre l'outsider et le favori.
-    mise_totale basee sur le kelly_full de l'OUTSIDER (comme en
-    backtest), repartie selon le ratio cote_outsider/cote_favori de
-    sorte que le gain soit egal si l'un ou l'autre gagne."""
     mise_totale = fonction_mise(proba_outsider, cote_outsider, bankroll_dutch, *args_fonction_mise)
     if mise_totale <= 0:
         return None
@@ -138,6 +134,7 @@ def main():
     bankroll_trio, chemin_bankroll_trio = get_bankroll(RACINE, "trio")
     bankroll_multi, chemin_bankroll_multi = get_bankroll(RACINE, "multi")
     bankroll_2favori, chemin_bankroll_2favori = get_bankroll(RACINE, "2favori")
+    bankroll_couple_harville, chemin_bankroll_couple_harville = get_bankroll(RACINE, "couple_harville")
 
     try:
         courses = recuperer_programme_du_jour(date_str)
@@ -183,6 +180,7 @@ def main():
         value_bets_v18 = []
         value_bets_v110 = []
         candidats_place = []
+        toutes_probas_v110 = []  # NOUVEAU : pour couple_harville - TOUS les chevaux, pas seulement EV>10%
 
         partants_avec_cote = []
 
@@ -190,6 +188,7 @@ def main():
             if p.get("statut") != "PARTANT":
                 continue
             cheval = p.get("nom")
+            num_pmu_cheval = p.get("numPmu")
             driver = p.get("driver") or p.get("entraineur")
             cote = extraire_cote_directe(p)
 
@@ -296,6 +295,8 @@ def main():
 
                 proba110, contrib110 = calculer_proba_v110_ou_place_avec_contributions(valeurs_communes, modele_v110)
                 if proba110 is not None:
+                    if num_pmu_cheval is not None:
+                        toutes_probas_v110.append((cheval, num_pmu_cheval, proba110))
                     ev110 = proba110 * cote - 1
                     if ev110 > SEUIL_EV:
                         mise110 = calculer_mise_v110(proba110, cote, bankroll_v110, deferre_4_pieds)
@@ -390,7 +391,6 @@ def main():
                                 if mise_2favori > 0:
                                     value_bets_2favori.append((cheval_2favori, cote_2favori, proba_2favori, ev_2favori, mise_2favori))
 
-        # --- v1.10-FAVORI ---
         value_bets_v110favori = []
         if partants_avec_cote and value_bets_v110:
             cote_favori_marche = min(c for _, c in partants_avec_cote)
@@ -402,7 +402,6 @@ def main():
                     if mise_v110favori > 0:
                         value_bets_v110favori.append((cheval_v110, cote_v110, proba_v110, ev_v110, mise_v110favori, deferre_v110))
 
-        # --- v1.4-FAVORI ---
         value_bets_v14favori = []
         if partants_avec_cote and value_bets_v14:
             cote_favori_marche = min(c for _, c in partants_avec_cote)
@@ -414,7 +413,6 @@ def main():
                     if mise_v14favori > 0:
                         value_bets_v14favori.append((cheval_v14, cote_v14, proba_v14, ev_v14, mise_v14favori))
 
-        # --- NOUVEAU : v14dutch et v110dutch (couverture outsider par le favori) ---
         dutch_v14 = None
         dutch_v110 = None
         if partants_avec_cote:
@@ -430,7 +428,7 @@ def main():
                     )
                     if resultat:
                         dutch_v14 = resultat
-                        break  # un seul dutching par course, sur le meilleur/premier outsider trouve
+                        break
 
             for item in value_bets_v110:
                 cheval_out, cote_out, proba_out, ev_out = item[0], item[1], item[2], item[3]
@@ -444,6 +442,19 @@ def main():
                     if resultat:
                         dutch_v110 = resultat
                         break
+
+        # --- NOUVEAU : COUPLE HARVILLE (top-2 par probabilite individuelle v1.10) ---
+        couple_harville_pick = None
+        if len(toutes_probas_v110) >= 2:
+            tries = sorted(toutes_probas_v110, key=lambda x: x[2], reverse=True)
+            cheval_1, num_pmu_1, proba_1 = tries[0]
+            cheval_2, num_pmu_2, proba_2 = tries[1]
+            mise_couple = calculer_mise_place()  # mise fixe, meme mecanisme que place/2sur4/trio/multi
+            couple_harville_pick = {
+                "cheval_1": cheval_1, "num_pmu_1": num_pmu_1,
+                "cheval_2": cheval_2, "num_pmu_2": num_pmu_2,
+                "mise": mise_couple,
+            }
 
         sections_msg = []
         if value_bets_v14 and not etat_pause.get("v14", False):
@@ -492,6 +503,10 @@ def main():
             bloc = f"<b>Modele v1.10-FAVORI</b> (bankroll : {bankroll_v110favori:.0f}EUR) :\n"
             for cheval, cote, proba, ev, mise, d4 in value_bets_v110favori:
                 bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}EUR</b>\n"
+            sections_msg.append(bloc)
+        if couple_harville_pick and not etat_pause.get("couple_harville", False):
+            bloc = f"<b>Modele COUPLE-HARVILLE</b> (bankroll : {bankroll_couple_harville:.0f}EUR) :\n"
+            bloc += f"- {couple_harville_pick['cheval_1']} + {couple_harville_pick['cheval_2']} - <b>mise {couple_harville_pick['mise']:.2f}EUR</b>\n"
             sections_msg.append(bloc)
         if value_bets_place and not etat_pause.get("place", False):
             bloc = f"<b>Modele PLACE</b> (bankroll : {bankroll_place:.0f}EUR, top pick, mise fixe) :\n"
@@ -545,6 +560,10 @@ def main():
             log_paris.append({"race_id": race_id, "modele": "v110dutch", "cheval": dutch_v110["cheval_favori"], "cote": dutch_v110["cote_favori"], "cote_cloture": "", "ev": "", "mise": dutch_v110["mise_favori"], "date_detection": maintenant.isoformat()})
         for cheval, cote, proba, ev, mise, d4 in value_bets_v110favori:
             log_paris.append({"race_id": race_id, "modele": "v110favori", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+        if couple_harville_pick:
+            chevaux_str = f"{couple_harville_pick['cheval_1']}|{couple_harville_pick['cheval_2']}"
+            nums_str = f"{couple_harville_pick['num_pmu_1']}-{couple_harville_pick['num_pmu_2']}"
+            log_paris.append({"race_id": race_id, "modele": "couple_harville", "cheval": chevaux_str, "cote": nums_str, "cote_cloture": "", "ev": "", "mise": couple_harville_pick["mise"], "date_detection": maintenant.isoformat()})
         for cheval, proba, mise in value_bets_place:
             log_paris.append({"race_id": race_id, "modele": "place", "cheval": cheval, "cote": "", "cote_cloture": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
         for chevaux, mise in value_bets_deux_sur_quatre:
