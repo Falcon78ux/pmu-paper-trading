@@ -2,14 +2,11 @@
 =============================================================================
 VERIFIER_RESULTATS.PY - Compare aux resultats reels, met a jour l'historique
 =============================================================================
-NOUVEAU (20 aout) : v14dutch et v110dutch (dutching) ajoutes. Chaque
-opportunite dutching genere DEUX lignes dans paris_virtuels.csv (meme
-race_id, meme modele) - une pour l'outsider, une pour le favori. La
-logique de resolution standard du marche gagnant (deja en place, gere
-n'importe quel nombre de lignes par modele/course) les traite
-correctement sans code special : chaque jambe est evaluee selon si SON
-cheval a gagne, et les deux gains/pertes s'additionnent naturellement
-dans la meme bankroll.
+NOUVEAU (21 aout) : couple_harville - resolution via le rapport
+COUPLE_GAGNANT (ou COUPLE_ORDRE pour les anciennes courses, PMU a
+change la nomenclature a un moment dans l'historique). Le champ "cote"
+du log stocke temporairement "num_pmu_1-num_pmu_2" (nos numeros PMU
+choisis), compare a la combinaison gagnante reelle.
 =============================================================================
 """
 
@@ -129,6 +126,30 @@ def extraire_cote_multi(data, type_pari):
     return meilleure_cote
 
 
+def extraire_couple_gagnant(data):
+    """Extrait la combinaison gagnante et le dividende du COUPLE
+    GAGNANT. Gere les deux nomenclatures rencontrees dans l'historique
+    (COUPLE_GAGNANT recent, COUPLE_ORDRE plus ancien)."""
+    for pari in data:
+        type_pari = pari.get("typePari", "")
+        if type_pari not in ("COUPLE_GAGNANT", "COUPLE_ORDRE"):
+            continue
+        mise_base = pari.get("miseBase", 200)
+        rapports = pari.get("rapports", [])
+        if not rapports:
+            continue
+        rap = rapports[0]
+        combinaison = rap.get("combinaison", "")
+        try:
+            ensemble = frozenset(int(x) for x in str(combinaison).split("-"))
+        except Exception:
+            return None, None, combinaison
+        dividende = rap.get("dividendePourUneMiseDeBase")
+        if dividende is not None:
+            return ensemble, dividende / mise_base, combinaison
+    return None, None, None
+
+
 def resultat_disponible(participants):
     return any(p.get("ordreArrivee") is not None for p in participants)
 
@@ -172,6 +193,7 @@ def main():
     bankroll_trio, chemin_bankroll_trio = get_bankroll(RACINE, "trio")
     bankroll_multi, chemin_bankroll_multi = get_bankroll(RACINE, "multi")
     bankroll_2favori, chemin_bankroll_2favori = get_bankroll(RACINE, "2favori")
+    bankroll_couple_harville, chemin_bankroll_couple_harville = get_bankroll(RACINE, "couple_harville")
 
     chemin_log = f"{RACINE}/paris_virtuels.csv"
     if not os.path.exists(chemin_log):
@@ -271,7 +293,7 @@ def main():
         if nb_partants_course > 0 and hippodrome_nom:
             maj_hippodrome(etat_hippodromes, hippodrome_nom, somme_ecart_course, nb_partants_course)
 
-        paris_combines_en_attente = {"place", "2sur4", "trio", "multi"}
+        paris_combines_en_attente = {"place", "2sur4", "trio", "multi", "couple_harville"}
         a_un_pari_combine_en_attente = any(
             l["race_id"] == race_id and l["modele"] in paris_combines_en_attente and l.get("resultat", "") == ""
             for l in lignes
@@ -285,10 +307,12 @@ def main():
 
         rapports_place, cote_2sur4 = None, None
         trio_reel_ensemble, trio_reel_cote, trio_combinaison_brute = None, None, None
+        couple_reel_ensemble, couple_reel_cote, couple_combinaison_brute = None, None, None
         if rapports_data is not None:
             rapports_place = extraire_rapports_place(rapports_data)
             cote_2sur4 = extraire_cote_deux_sur_quatre(rapports_data)
             trio_reel_ensemble, trio_reel_cote, trio_combinaison_brute = extraire_trio(rapports_data)
+            couple_reel_ensemble, couple_reel_cote, couple_combinaison_brute = extraire_couple_gagnant(rapports_data)
 
         top4_reel = frozenset(
             p.get("numPmu") for p in participants
@@ -298,6 +322,51 @@ def main():
         lignes_message = []
         for l in lignes:
             if l["race_id"] != race_id or l.get("resultat", "") != "":
+                continue
+
+            if l["modele"] == "couple_harville":
+                if course_combine_incomplete:
+                    continue
+                chevaux_paries = l["cheval"].split("|")
+                try:
+                    num_pmu_1, num_pmu_2 = (int(x) for x in l["cote"].split("-"))
+                except Exception:
+                    continue
+                notre_pick = frozenset([num_pmu_1, num_pmu_2])
+
+                if couple_reel_ensemble is None:
+                    ecrire_audit({
+                        "race_id": race_id, "modele": "couple_harville",
+                        "chevaux_paries": "|".join(chevaux_paries),
+                        "rangs_arrivee_chevaux_paries": "",
+                        "top4_reel": top4_reel_str, "combinaison_rapport_brute": couple_combinaison_brute or "indisponible",
+                        "cote_utilisee": "", "gain_calcule": "", "resultat": "NON_RESOLU_NP",
+                        "coherence_verifiee": "IGNORE", "detail_incoherence": "Rapport COUPLE indisponible pour cette course",
+                        "date_verif": datetime.now(timezone.utc).isoformat(),
+                    })
+                    continue
+
+                a_gagne = notre_pick == couple_reel_ensemble
+                mise = float(l.get("mise", 0) or 0)
+                gain_euros = mise * (couple_reel_cote - 1) if a_gagne else -mise
+                l["resultat"] = "GAGNANT" if a_gagne else "PERDANT"
+                l["gain_euros"] = f"{gain_euros:.2f}"
+                l["cote"] = f"{couple_reel_cote:.2f}" if a_gagne else l["cote"]
+                bankroll_couple_harville += gain_euros
+
+                ecrire_audit({
+                    "race_id": race_id, "modele": "couple_harville",
+                    "chevaux_paries": "|".join(chevaux_paries),
+                    "rangs_arrivee_chevaux_paries": "",
+                    "top4_reel": top4_reel_str, "combinaison_rapport_brute": couple_combinaison_brute or "",
+                    "cote_utilisee": couple_reel_cote or "", "gain_calcule": f"{gain_euros:.2f}",
+                    "resultat": l["resultat"], "coherence_verifiee": "OK",
+                    "detail_incoherence": "", "date_verif": datetime.now(timezone.utc).isoformat(),
+                })
+
+                if not etat_pause.get("couple_harville", False):
+                    emoji = "OK" if a_gagne else "X"
+                    lignes_message.append(f"{emoji} [couple_harville] {' + '.join(chevaux_paries)} (mise {mise:.2f}EUR) - gain {gain_euros:+.2f}EUR | bankroll couple_harville : {bankroll_couple_harville:.2f}EUR")
                 continue
 
             if l["modele"] == "2sur4":
@@ -592,6 +661,7 @@ def main():
     mettre_a_jour_bankroll(chemin_bankroll_trio, bankroll_trio)
     mettre_a_jour_bankroll(chemin_bankroll_multi, bankroll_multi)
     mettre_a_jour_bankroll(chemin_bankroll_2favori, bankroll_2favori)
+    mettre_a_jour_bankroll(chemin_bankroll_couple_harville, bankroll_couple_harville)
 
     sauvegarder_json(f"{RACINE}/etat_drivers.json", etat_drivers)
     sauvegarder_json(f"{RACINE}/etat_hippodromes.json", etat_hippodromes)
