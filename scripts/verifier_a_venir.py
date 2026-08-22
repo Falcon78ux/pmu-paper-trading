@@ -2,13 +2,17 @@
 =============================================================================
 VERIFIER_A_VENIR.PY - Detecte les value bets avant chaque course
 =============================================================================
-16 strategies en parallele. CORRECTION MAJEURE (21 aout, soir) : toutes
-les mises Kelly (via commun.py) et la repartition du dutching sont
-desormais arrondies a l'EURO ENTIER, minimum 1EUR - confirme par test
-direct sur l'application PMU reelle (pas de centimes acceptes). Impact
-mesure sur v1.10 : negligeable, meme legerement positif (+1994.4%/an
-contre +1981.3%/an en decimal continu, drawdown ameliore 22.7% contre
-24.0%) - aucune conclusion du projet remise en cause.
+16 strategies en parallele. CORRECTION MAJEURE (22 aout) : le dutching
+(v14dutch, v110dutch) traite desormais CHAQUE outsider qualifie
+(cote>=8, EV>10%) d'une meme course comme une opportunite INDEPENDANTE
+- auparavant, la boucle s'arretait au premier outsider trouve (break),
+ce qui ne correspondait PAS a la methodologie de backtest (chaque
+outsider qualifie etait teste comme sa propre opportunite, n=14873
+pour v1.10). Bug identifie lors d'un audit complet comparant la
+logique de production a celle du backtest, suite a un desalignement
+observe entre performance backtest et direct sur plusieurs strategies
+(2sur4/trio/multi se sont reveles etre un faux probleme lie a l'IC95%,
+mais le dutching avait un vrai ecart de logique).
 =============================================================================
 """
 
@@ -79,11 +83,6 @@ def recuperer_participants(date_str, num_reunion, num_course):
 def calculer_dutching(cheval_outsider, cote_outsider, proba_outsider, ev_outsider,
                        cheval_favori, cote_favori, bankroll_dutch,
                        fonction_mise, *args_fonction_mise):
-    """CORRIGE (21 aout) : chaque jambe (outsider et favori) est
-    desormais arrondie individuellement a l'euro entier, minimum 1EUR
-    chacune - le PMU n'accepte pas de mise decimale. Si l'une des deux
-    jambes tombe a 0 apres arrondi, le dutching entier est annule pour
-    cette course (retourne None)."""
     mise_totale = fonction_mise(proba_outsider, cote_outsider, bankroll_dutch, *args_fonction_mise)
     if mise_totale <= 0:
         return None
@@ -422,8 +421,9 @@ def main():
                     if mise_v14favori > 0:
                         value_bets_v14favori.append((cheval_v14, cote_v14, proba_v14, ev_v14, mise_v14favori))
 
-        dutch_v14 = None
-        dutch_v110 = None
+        # --- CORRIGE : dutching sur TOUTES les opportunites qualifiees, pas seulement la 1ere ---
+        dutch_v14_liste = []
+        dutch_v110_liste = []
         if partants_avec_cote:
             favori_marche_nom, cote_favori_marche = min(partants_avec_cote, key=lambda x: x[1])
 
@@ -436,8 +436,7 @@ def main():
                         calculer_mise,
                     )
                     if resultat:
-                        dutch_v14 = resultat
-                        break
+                        dutch_v14_liste.append(resultat)
 
             for item in value_bets_v110:
                 cheval_out, cote_out, proba_out, ev_out = item[0], item[1], item[2], item[3]
@@ -449,8 +448,7 @@ def main():
                         calculer_mise_v110, deferre_out,
                     )
                     if resultat:
-                        dutch_v110 = resultat
-                        break
+                        dutch_v110_liste.append(resultat)
 
         couple_harville_pick = None
         if len(toutes_probas_v110) >= 2:
@@ -480,10 +478,11 @@ def main():
             for cheval, cote, proba, ev, mise in value_bets_v14:
                 bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
-        if dutch_v14 and not etat_pause.get("v14dutch", False):
-            bloc = f"<b>Modele v1.4-DUTCH</b> (bankroll : {bankroll_v14dutch:.0f}EUR) :\n"
-            bloc += f"- Outsider {dutch_v14['cheval_outsider']} (cote {dutch_v14['cote_outsider']:.1f}) - <b>mise {dutch_v14['mise_outsider']:.0f}EUR</b>\n"
-            bloc += f"- Favori {dutch_v14['cheval_favori']} (cote {dutch_v14['cote_favori']:.1f}) - <b>mise {dutch_v14['mise_favori']:.0f}EUR</b>\n"
+        if dutch_v14_liste and not etat_pause.get("v14dutch", False):
+            bloc = f"<b>Modele v1.4-DUTCH</b> (bankroll : {bankroll_v14dutch:.0f}EUR, {len(dutch_v14_liste)} opportunite(s)) :\n"
+            for d in dutch_v14_liste:
+                bloc += f"- Outsider {d['cheval_outsider']} (cote {d['cote_outsider']:.1f}) - <b>mise {d['mise_outsider']:.0f}EUR</b>\n"
+                bloc += f"  + Favori {d['cheval_favori']} (cote {d['cote_favori']:.1f}) - <b>mise {d['mise_favori']:.0f}EUR</b>\n"
             sections_msg.append(bloc)
         if value_bets_v14favori and not etat_pause.get("v14favori", False):
             bloc = f"<b>Modele v1.4-FAVORI</b> (bankroll : {bankroll_v14favori:.0f}EUR) :\n"
@@ -512,10 +511,11 @@ def main():
                 marque_d4 = " [D4]" if d4 else ""
                 bloc += f"- {cheval}{marque_d4} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
-        if dutch_v110 and not etat_pause.get("v110dutch", False):
-            bloc = f"<b>Modele v1.10-DUTCH</b> (bankroll : {bankroll_v110dutch:.0f}EUR) :\n"
-            bloc += f"- Outsider {dutch_v110['cheval_outsider']} (cote {dutch_v110['cote_outsider']:.1f}) - <b>mise {dutch_v110['mise_outsider']:.0f}EUR</b>\n"
-            bloc += f"- Favori {dutch_v110['cheval_favori']} (cote {dutch_v110['cote_favori']:.1f}) - <b>mise {dutch_v110['mise_favori']:.0f}EUR</b>\n"
+        if dutch_v110_liste and not etat_pause.get("v110dutch", False):
+            bloc = f"<b>Modele v1.10-DUTCH</b> (bankroll : {bankroll_v110dutch:.0f}EUR, {len(dutch_v110_liste)} opportunite(s)) :\n"
+            for d in dutch_v110_liste:
+                bloc += f"- Outsider {d['cheval_outsider']} (cote {d['cote_outsider']:.1f}) - <b>mise {d['mise_outsider']:.0f}EUR</b>\n"
+                bloc += f"  + Favori {d['cheval_favori']} (cote {d['cote_favori']:.1f}) - <b>mise {d['mise_favori']:.0f}EUR</b>\n"
             sections_msg.append(bloc)
         if value_bets_v110favori and not etat_pause.get("v110favori", False):
             bloc = f"<b>Modele v1.10-FAVORI</b> (bankroll : {bankroll_v110favori:.0f}EUR) :\n"
@@ -565,9 +565,9 @@ def main():
 
         for cheval, cote, proba, ev, mise in value_bets_v14:
             log_paris.append({"race_id": race_id, "modele": "v1.4", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
-        if dutch_v14:
-            log_paris.append({"race_id": race_id, "modele": "v14dutch", "cheval": dutch_v14["cheval_outsider"], "cote": dutch_v14["cote_outsider"], "cote_cloture": "", "ev": dutch_v14["ev_outsider"], "mise": dutch_v14["mise_outsider"], "date_detection": maintenant.isoformat()})
-            log_paris.append({"race_id": race_id, "modele": "v14dutch", "cheval": dutch_v14["cheval_favori"], "cote": dutch_v14["cote_favori"], "cote_cloture": "", "ev": "", "mise": dutch_v14["mise_favori"], "date_detection": maintenant.isoformat()})
+        for d in dutch_v14_liste:
+            log_paris.append({"race_id": race_id, "modele": "v14dutch", "cheval": d["cheval_outsider"], "cote": d["cote_outsider"], "cote_cloture": "", "ev": d["ev_outsider"], "mise": d["mise_outsider"], "date_detection": maintenant.isoformat()})
+            log_paris.append({"race_id": race_id, "modele": "v14dutch", "cheval": d["cheval_favori"], "cote": d["cote_favori"], "cote_cloture": "", "ev": "", "mise": d["mise_favori"], "date_detection": maintenant.isoformat()})
         for cheval, cote, proba, ev, mise in value_bets_v14favori:
             log_paris.append({"race_id": race_id, "modele": "v14favori", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
         for cheval, cote, proba, ev, mise in value_bets_v14sire:
@@ -578,9 +578,9 @@ def main():
             log_paris.append({"race_id": race_id, "modele": "v1.8", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
         for cheval, cote, proba, ev, mise, d4 in value_bets_v110:
             log_paris.append({"race_id": race_id, "modele": "v1.10", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
-        if dutch_v110:
-            log_paris.append({"race_id": race_id, "modele": "v110dutch", "cheval": dutch_v110["cheval_outsider"], "cote": dutch_v110["cote_outsider"], "cote_cloture": "", "ev": dutch_v110["ev_outsider"], "mise": dutch_v110["mise_outsider"], "date_detection": maintenant.isoformat()})
-            log_paris.append({"race_id": race_id, "modele": "v110dutch", "cheval": dutch_v110["cheval_favori"], "cote": dutch_v110["cote_favori"], "cote_cloture": "", "ev": "", "mise": dutch_v110["mise_favori"], "date_detection": maintenant.isoformat()})
+        for d in dutch_v110_liste:
+            log_paris.append({"race_id": race_id, "modele": "v110dutch", "cheval": d["cheval_outsider"], "cote": d["cote_outsider"], "cote_cloture": "", "ev": d["ev_outsider"], "mise": d["mise_outsider"], "date_detection": maintenant.isoformat()})
+            log_paris.append({"race_id": race_id, "modele": "v110dutch", "cheval": d["cheval_favori"], "cote": d["cote_favori"], "cote_cloture": "", "ev": "", "mise": d["mise_favori"], "date_detection": maintenant.isoformat()})
         for cheval, cote, proba, ev, mise, d4 in value_bets_v110favori:
             log_paris.append({"race_id": race_id, "modele": "v110favori", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
         if consensus_place_pick:
