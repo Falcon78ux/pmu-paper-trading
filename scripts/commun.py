@@ -2,9 +2,14 @@
 =============================================================================
 FONCTIONS COMMUNES - utilisees par verifier_a_venir.py et verifier_resultats.py
 =============================================================================
-NOUVEAU (13 aout) : protection contre le plafond de gain PMU (100000EUR
-par pari). Ajoutee a toutes les fonctions de mise Kelly (marche
-gagnant) : mise = min(mise_kelly, plafond_dynamique, 100000/cote).
+CORRECTION MAJEURE (21 aout, soir) : les mises doivent etre des
+MONTANTS ENTIERS EN EUROS (pas de centimes), minimum 1EUR - confirme
+par l'utilisateur en testant directement sur l'application PMU reelle
+(un Simple Gagnant a 4.82EUR ou 9.57EUR n'est pas plaçable). Toutes
+les fonctions de calcul de mise Kelly arrondissent desormais a l'euro
+le plus proche et rejettent le pari si le resultat est inferieur a
+1EUR. AVERTISSEMENT : tous les backtests anterieurs a cette correction
+supposaient des mises decimales continues - a re-verifier.
 =============================================================================
 """
 
@@ -291,7 +296,7 @@ def extraire_deferre_4_pieds(participant):
 
 FRACTION_KELLY = 0.10
 FRACTION_KELLY_D4 = 0.05
-MISE_MINIMUM = 1.50
+MISE_MINIMUM = 1.0  # CORRIGE (21 aout) : 1EUR confirme sur l'app reelle, pas 1.50EUR
 BANKROLL_DEPART = 1236
 MISE_FIXE_PLACE = 10
 
@@ -304,6 +309,17 @@ PALIERS_PLAFOND = [
 ]
 
 PLAFOND_GAIN_PMU = 100000
+
+
+def arrondir_mise_euro(mise):
+    """CORRECTION (21 aout) : le PMU n'accepte que des montants entiers
+    en euros, minimum 1EUR - confirme par test direct sur l'application
+    reelle. Arrondit a l'euro le plus proche, rejette (retourne 0.0) si
+    le resultat est inferieur a 1EUR."""
+    mise_arrondie = round(mise)
+    if mise_arrondie < MISE_MINIMUM:
+        return 0.0
+    return float(mise_arrondie)
 
 
 def obtenir_plafond_dynamique(bankroll):
@@ -328,9 +344,7 @@ def calculer_mise(proba, cote, bankroll):
     plafond_palier = obtenir_plafond_dynamique(bankroll)
     plafond_gain = PLAFOND_GAIN_PMU / cote
     mise = min(kelly_fraction * bankroll, plafond_palier, plafond_gain)
-    if mise < MISE_MINIMUM:
-        return 0.0
-    return round(mise, 2)
+    return arrondir_mise_euro(mise)
 
 
 def calculer_mise_v18(proba, cote, bankroll, est_deferre_4_pieds):
@@ -343,9 +357,7 @@ def calculer_mise_v18(proba, cote, bankroll, est_deferre_4_pieds):
     plafond_palier = obtenir_plafond_dynamique(bankroll)
     plafond_gain = PLAFOND_GAIN_PMU / cote
     mise = min(kelly_fraction * bankroll, plafond_palier, plafond_gain)
-    if mise < MISE_MINIMUM:
-        return 0.0
-    return round(mise, 2)
+    return arrondir_mise_euro(mise)
 
 
 def calculer_mise_v110(proba, cote, bankroll, est_deferre_4_pieds):
@@ -358,13 +370,11 @@ def calculer_mise_v110(proba, cote, bankroll, est_deferre_4_pieds):
     plafond_palier = obtenir_plafond_dynamique(bankroll)
     plafond_gain = PLAFOND_GAIN_PMU / cote
     mise = min(kelly_fraction * bankroll, plafond_palier, plafond_gain)
-    if mise < MISE_MINIMUM:
-        return 0.0
-    return round(mise, 2)
+    return arrondir_mise_euro(mise)
 
 
 def calculer_mise_place():
-    return MISE_FIXE_PLACE
+    return float(MISE_FIXE_PLACE)
 
 
 def calculer_mise_2favori(proba, cote, bankroll):
@@ -376,9 +386,7 @@ def calculer_mise_2favori(proba, cote, bankroll):
     plafond_palier = obtenir_plafond_dynamique(bankroll)
     plafond_gain = PLAFOND_GAIN_PMU / cote
     mise = min(kelly_fraction * bankroll, plafond_palier, plafond_gain)
-    if mise < MISE_MINIMUM:
-        return 0.0
-    return round(mise, 2)
+    return arrondir_mise_euro(mise)
 
 
 def calculer_mise_v14sire(proba, cote, bankroll):
@@ -390,9 +398,7 @@ def calculer_mise_v14sire(proba, cote, bankroll):
     plafond_palier = obtenir_plafond_dynamique(bankroll)
     plafond_gain = PLAFOND_GAIN_PMU / cote
     mise = min(kelly_fraction * bankroll, plafond_palier, plafond_gain)
-    if mise < MISE_MINIMUM:
-        return 0.0
-    return round(mise, 2)
+    return arrondir_mise_euro(mise)
 
 
 def mettre_a_jour_bankroll(chemin, nouvelle_bankroll):
