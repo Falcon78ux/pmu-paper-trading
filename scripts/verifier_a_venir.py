@@ -2,16 +2,13 @@
 =============================================================================
 VERIFIER_A_VENIR.PY - Detecte les value bets avant chaque course
 =============================================================================
-16 strategies en parallele. NOUVEAU (21 aout) : consensus_place -
-reutilise le calcul deja existant de value_bets_v110 (cible gagnant) ET
-candidats_place (cible place, top pick) - garde uniquement les cas ou
-le MEME cheval est simultanement value bet gagnant v1.10 ET le meilleur
-choix du modele place. Deux cibles d'entrainement differentes = vrai
-signal independant, pas juste un autre seuil. Valide en backtest :
-n=7811, taux de reussite 35.1% (contre 19.1% pour v1.10 seul), ROI
-+37.38%/pari, gain compose +1311.4%/an, drawdown 17.7% (contre 24.0%
-pour v1.10 seul - meilleur profil de risque, meme si croissance brute
-inferieure au v1.10 sans filtre).
+16 strategies en parallele. CORRECTION MAJEURE (21 aout, soir) : toutes
+les mises Kelly (via commun.py) et la repartition du dutching sont
+desormais arrondies a l'EURO ENTIER, minimum 1EUR - confirme par test
+direct sur l'application PMU reelle (pas de centimes acceptes). Impact
+mesure sur v1.10 : negligeable, meme legerement positif (+1994.4%/an
+contre +1981.3%/an en decimal continu, drawdown ameliore 22.7% contre
+24.0%) - aucune conclusion du projet remise en cause.
 =============================================================================
 """
 
@@ -35,6 +32,7 @@ from commun import (
     get_dernier_rang, get_sire_forme, charger_table_pedigree,
     get_bankroll, calculer_mise, calculer_mise_v18, calculer_mise_v110,
     calculer_mise_place, calculer_mise_2favori, calculer_mise_v14sire,
+    arrondir_mise_euro, MISE_MINIMUM,
 )
 
 RACINE = os.path.join(os.path.dirname(__file__), "..")
@@ -43,7 +41,6 @@ SEUIL_EV = 0.10
 FENETRE_MIN_MINUTES = 15
 FENETRE_MAX_MINUTES = 40
 SEUIL_OUTSIDER_DUTCHING = 8.0
-MISE_MINIMUM = 1.50
 
 
 def recuperer_programme_du_jour(date_str):
@@ -82,19 +79,28 @@ def recuperer_participants(date_str, num_reunion, num_course):
 def calculer_dutching(cheval_outsider, cote_outsider, proba_outsider, ev_outsider,
                        cheval_favori, cote_favori, bankroll_dutch,
                        fonction_mise, *args_fonction_mise):
+    """CORRIGE (21 aout) : chaque jambe (outsider et favori) est
+    desormais arrondie individuellement a l'euro entier, minimum 1EUR
+    chacune - le PMU n'accepte pas de mise decimale. Si l'une des deux
+    jambes tombe a 0 apres arrondi, le dutching entier est annule pour
+    cette course (retourne None)."""
     mise_totale = fonction_mise(proba_outsider, cote_outsider, bankroll_dutch, *args_fonction_mise)
     if mise_totale <= 0:
         return None
     ratio = cote_outsider / cote_favori
-    mise_outsider = mise_totale / (1 + ratio)
-    mise_favori = mise_totale - mise_outsider
+    mise_outsider_brute = mise_totale / (1 + ratio)
+    mise_favori_brute = mise_totale - mise_outsider_brute
+
+    mise_outsider = arrondir_mise_euro(mise_outsider_brute)
+    mise_favori = arrondir_mise_euro(mise_favori_brute)
+
     if mise_outsider < MISE_MINIMUM or mise_favori < MISE_MINIMUM:
         return None
     return {
         "cheval_outsider": cheval_outsider, "cote_outsider": cote_outsider,
-        "mise_outsider": round(mise_outsider, 2),
+        "mise_outsider": mise_outsider,
         "cheval_favori": cheval_favori, "cote_favori": cote_favori,
-        "mise_favori": round(mise_favori, 2),
+        "mise_favori": mise_favori,
         "ev_outsider": ev_outsider,
     }
 
@@ -458,7 +464,6 @@ def main():
                 "mise": mise_couple,
             }
 
-        # --- NOUVEAU : CONSENSUS_PLACE (v1.10 gagnant ET place d'accord sur le meme cheval) ---
         consensus_place_pick = None
         if meilleur_pick_place is not None and value_bets_v110:
             for item in value_bets_v110:
@@ -473,83 +478,83 @@ def main():
         if value_bets_v14 and not etat_pause.get("v14", False):
             bloc = f"<b>Modele v1.4</b> (bankroll : {bankroll_v14:.0f}EUR) :\n"
             for cheval, cote, proba, ev, mise in value_bets_v14:
-                bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}EUR</b>\n"
+                bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
         if dutch_v14 and not etat_pause.get("v14dutch", False):
             bloc = f"<b>Modele v1.4-DUTCH</b> (bankroll : {bankroll_v14dutch:.0f}EUR) :\n"
-            bloc += f"- Outsider {dutch_v14['cheval_outsider']} (cote {dutch_v14['cote_outsider']:.1f}) - <b>mise {dutch_v14['mise_outsider']:.2f}EUR</b>\n"
-            bloc += f"- Favori {dutch_v14['cheval_favori']} (cote {dutch_v14['cote_favori']:.1f}) - <b>mise {dutch_v14['mise_favori']:.2f}EUR</b>\n"
+            bloc += f"- Outsider {dutch_v14['cheval_outsider']} (cote {dutch_v14['cote_outsider']:.1f}) - <b>mise {dutch_v14['mise_outsider']:.0f}EUR</b>\n"
+            bloc += f"- Favori {dutch_v14['cheval_favori']} (cote {dutch_v14['cote_favori']:.1f}) - <b>mise {dutch_v14['mise_favori']:.0f}EUR</b>\n"
             sections_msg.append(bloc)
         if value_bets_v14favori and not etat_pause.get("v14favori", False):
             bloc = f"<b>Modele v1.4-FAVORI</b> (bankroll : {bankroll_v14favori:.0f}EUR) :\n"
             for cheval, cote, proba, ev, mise in value_bets_v14favori:
-                bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}EUR</b>\n"
+                bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
         if value_bets_v14sire and not etat_pause.get("v14sire", False):
             bloc = f"<b>Modele v1.4+GENEALOGIE</b> (bankroll : {bankroll_v14sire:.0f}EUR) :\n"
             for cheval, cote, proba, ev, mise in value_bets_v14sire:
-                bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}EUR</b>\n"
+                bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
         if value_bets_v15 and not etat_pause.get("v15", False):
             bloc = f"<b>Modele v1.5</b> (bankroll : {bankroll_v15:.0f}EUR) :\n"
             for cheval, cote, proba, ev, mise in value_bets_v15:
-                bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}EUR</b>\n"
+                bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
         if value_bets_v18 and not etat_pause.get("v18", False):
             bloc = f"<b>Modele v1.8</b> (bankroll : {bankroll_v18:.0f}EUR) :\n"
             for cheval, cote, proba, ev, mise, d4 in value_bets_v18:
                 marque_d4 = " [D4]" if d4 else ""
-                bloc += f"- {cheval}{marque_d4} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}EUR</b>\n"
+                bloc += f"- {cheval}{marque_d4} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
         if value_bets_v110 and not etat_pause.get("v110", False):
             bloc = f"<b>Modele v1.10</b> (bankroll : {bankroll_v110:.0f}EUR) :\n"
             for cheval, cote, proba, ev, mise, d4 in value_bets_v110:
                 marque_d4 = " [D4]" if d4 else ""
-                bloc += f"- {cheval}{marque_d4} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}EUR</b>\n"
+                bloc += f"- {cheval}{marque_d4} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
         if dutch_v110 and not etat_pause.get("v110dutch", False):
             bloc = f"<b>Modele v1.10-DUTCH</b> (bankroll : {bankroll_v110dutch:.0f}EUR) :\n"
-            bloc += f"- Outsider {dutch_v110['cheval_outsider']} (cote {dutch_v110['cote_outsider']:.1f}) - <b>mise {dutch_v110['mise_outsider']:.2f}EUR</b>\n"
-            bloc += f"- Favori {dutch_v110['cheval_favori']} (cote {dutch_v110['cote_favori']:.1f}) - <b>mise {dutch_v110['mise_favori']:.2f}EUR</b>\n"
+            bloc += f"- Outsider {dutch_v110['cheval_outsider']} (cote {dutch_v110['cote_outsider']:.1f}) - <b>mise {dutch_v110['mise_outsider']:.0f}EUR</b>\n"
+            bloc += f"- Favori {dutch_v110['cheval_favori']} (cote {dutch_v110['cote_favori']:.1f}) - <b>mise {dutch_v110['mise_favori']:.0f}EUR</b>\n"
             sections_msg.append(bloc)
         if value_bets_v110favori and not etat_pause.get("v110favori", False):
             bloc = f"<b>Modele v1.10-FAVORI</b> (bankroll : {bankroll_v110favori:.0f}EUR) :\n"
             for cheval, cote, proba, ev, mise, d4 in value_bets_v110favori:
-                bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}EUR</b>\n"
+                bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
         if consensus_place_pick and not etat_pause.get("consensus_place", False):
             cheval, cote, proba, ev, mise = consensus_place_pick
             bloc = f"<b>Modele CONSENSUS-PLACE</b> (bankroll : {bankroll_consensus_place:.0f}EUR) :\n"
-            bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}EUR</b>\n"
+            bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
         if couple_harville_pick and not etat_pause.get("couple_harville", False):
             bloc = f"<b>Modele COUPLE-HARVILLE</b> (bankroll : {bankroll_couple_harville:.0f}EUR) :\n"
-            bloc += f"- {couple_harville_pick['cheval_1']} + {couple_harville_pick['cheval_2']} - <b>mise {couple_harville_pick['mise']:.2f}EUR</b>\n"
+            bloc += f"- {couple_harville_pick['cheval_1']} + {couple_harville_pick['cheval_2']} - <b>mise {couple_harville_pick['mise']:.0f}EUR</b>\n"
             sections_msg.append(bloc)
         if value_bets_place and not etat_pause.get("place", False):
             bloc = f"<b>Modele PLACE</b> (bankroll : {bankroll_place:.0f}EUR, top pick, mise fixe) :\n"
             for cheval, proba, mise in value_bets_place:
-                bloc += f"- {cheval} - proba place {proba:.1%}, <b>mise {mise:.2f}EUR</b>\n"
+                bloc += f"- {cheval} - proba place {proba:.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
         if value_bets_deux_sur_quatre and not etat_pause.get("2sur4", False):
             bloc = f"<b>Modele 2 SUR 4</b> (bankroll : {bankroll_2sur4:.0f}EUR, top 2, mise fixe) :\n"
             for chevaux, mise in value_bets_deux_sur_quatre:
-                bloc += f"- {' + '.join(chevaux)} - <b>mise {mise:.2f}EUR</b>\n"
+                bloc += f"- {' + '.join(chevaux)} - <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
         if value_bets_trio and not etat_pause.get("trio", False):
             bloc = f"<b>Modele TRIO</b> (bankroll : {bankroll_trio:.0f}EUR, top 3, mise fixe) :\n"
             for chevaux, mise in value_bets_trio:
-                bloc += f"- {' + '.join(chevaux)} - <b>mise {mise:.2f}EUR</b>\n"
+                bloc += f"- {' + '.join(chevaux)} - <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
         if value_bets_multi and not etat_pause.get("multi", False):
             bloc = f"<b>Modele {type_multi}</b> (bankroll : {bankroll_multi:.0f}EUR, top 4, mise fixe) :\n"
             for chevaux, mise, type_pari in value_bets_multi:
-                bloc += f"- {' + '.join(chevaux)} - <b>mise {mise:.2f}EUR</b>\n"
+                bloc += f"- {' + '.join(chevaux)} - <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
         if value_bets_2favori and not etat_pause.get("2favori", False):
             bloc = f"<b>Modele 2E FAVORI</b> (bankroll : {bankroll_2favori:.0f}EUR) :\n"
             for cheval, cote, proba, ev, mise in value_bets_2favori:
-                bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.2f}EUR</b>\n"
+                bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
 
         if sections_msg:
