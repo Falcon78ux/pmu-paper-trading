@@ -3,9 +3,11 @@
 COMMANDES_TELEGRAM.PY - Interroge et pilote le systeme via Telegram
 =============================================================================
 16 modeles : v14, v14dutch, v14favori, v14sire, v15, v18, v110,
-v110dutch, v110favori, consensus_place (NOUVEAU 21 aout - v1.10 ET
-place d'accord sur le meme cheval, deux cibles d'entrainement
-differentes), couple_harville, place, 2sur4, trio, multi, 2favori.
+v110dutch, v110favori, consensus_place, couple_harville, place, 2sur4,
+trio, multi, 2favori.
+NOUVEAU (21 aout, soir) : /bilan affiche desormais la mise totale
+engagee par strategie, et le cumul global des mises dans la ligne
+Total.
 =============================================================================
 """
 
@@ -47,13 +49,6 @@ MODELES_AVEC_CLV = [
     "2favori",
 ]
 
-# consensus_place : v1.10 (cible gagnant) ET modele place (cible place,
-# top pick) d'accord sur le meme cheval - deux cibles d'entrainement
-# differentes, signal le plus fort trouve dans ce projet (taux de
-# victoire 35.1% contre 19.1% pour v1.10 seul). Teste le 21 aout sur
-# walk-forward complet : n=7811, ROI +37.38%/pari, gain compose
-# +1311.4%/an, drawdown 17.7% (meilleur profil de risque que v1.10 seul
-# a 24.0%, meme si croissance brute inferieure).
 REFERENCE_BACKTEST = {
     "v14": {"n": 30984, "roi": 0.1075},
     "v14dutch": {"n": 7386, "roi": 0.30},
@@ -76,7 +71,7 @@ REFERENCE_BACKTEST = {
 TEXTE_AIDE = (
     "<b>Commandes disponibles</b>\n\n"
     "/bankroll — bankrolls actuelles des 16 strategies\n"
-    "/bilan — bilan du jour (gain, perte, ROI, nb paris)\n"
+    "/bilan — bilan du jour (gain, perte, ROI, nb paris, mises)\n"
     "/bilan JJ/MM/AAAA — bilan d'une date precise\n"
     "/bilan cumule — bilan depuis le debut\n"
     "/confiance — estimation combinee backtest+direct, par modele\n"
@@ -182,6 +177,7 @@ def traiter_bilan(argument):
     msg = f"📊 <b>{titre}</b>\n\n"
     gain_total_global = 0.0
     perte_total_global = 0.0
+    mise_totale_globale = 0.0
     nb_total_global = 0
     for cle in MODELES:
         nom = NOMS_AFFICHAGE[cle]
@@ -189,8 +185,10 @@ def traiter_bilan(argument):
         msg += f"<b>{nom}</b>\n"
         if stats:
             msg += f"{stats['nb']} paris, {stats['taux']:.1%} reussite\n"
+            msg += f"Mise totale : {stats['mise']:.2f}€\n"
             msg += f"Gain net : {stats['gain']:+.2f}€ (ROI {stats['roi']:+.1%})\n\n"
             nb_total_global += stats["nb"]
+            mise_totale_globale += stats["mise"]
             if stats["gain"] >= 0:
                 gain_total_global += stats["gain"]
             else:
@@ -200,6 +198,7 @@ def traiter_bilan(argument):
 
     msg += (
         f"<b>Total</b> : {nb_total_global} paris | "
+        f"mises engagees {mise_totale_globale:.2f}€ | "
         f"gains {gain_total_global:+.2f}€ | pertes {perte_total_global:+.2f}€"
     )
     return msg
