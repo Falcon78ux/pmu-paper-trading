@@ -373,7 +373,14 @@ def calculer_mise_v110(proba, cote, bankroll, est_deferre_4_pieds):
     return arrondir_mise_euro(mise)
 
 
-def calculer_mise_place():
+def calculer_mise_place(bankroll):
+    """CORRIGE (23 aout) : verifie que la bankroll dispose d'au moins
+    la mise fixe avant de parier - sans cette verification, une
+    bankroll epuisee continuait de "miser" 10EUR indefiniment,
+    derivant sous zero de facon irrealiste (impossible en argent reel,
+    ou un compte epuise ne peut plus engager de nouvelle mise)."""
+    if bankroll < MISE_FIXE_PLACE:
+        return 0.0
     return float(MISE_FIXE_PLACE)
 
 
