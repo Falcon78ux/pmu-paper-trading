@@ -1,639 +1,509 @@
 """
 =============================================================================
-VERIFIER_A_VENIR.PY - Detecte les value bets avant chaque course
+FONCTIONS COMMUNES - utilisees par verifier_a_venir.py et verifier_resultats.py
 =============================================================================
-16 strategies en parallele. CORRECTION MAJEURE (22 aout) : le dutching
-(v14dutch, v110dutch) traite desormais CHAQUE outsider qualifie
-(cote>=8, EV>10%) d'une meme course comme une opportunite INDEPENDANTE
-- auparavant, la boucle s'arretait au premier outsider trouve (break),
-ce qui ne correspondait PAS a la methodologie de backtest (chaque
-outsider qualifie etait teste comme sa propre opportunite, n=14873
-pour v1.10). Bug identifie lors d'un audit complet comparant la
-logique de production a celle du backtest, suite a un desalignement
-observe entre performance backtest et direct sur plusieurs strategies
-(2sur4/trio/multi se sont reveles etre un faux probleme lie a l'IC95%,
-mais le dutching avait un vrai ecart de logique).
+CORRECTION MAJEURE (21 aout, soir) : les mises doivent etre des
+MONTANTS ENTIERS EN EUROS (pas de centimes), minimum 1EUR - confirme
+par l'utilisateur en testant directement sur l'application PMU reelle
+(un Simple Gagnant a 4.82EUR ou 9.57EUR n'est pas plaçable). Toutes
+les fonctions de calcul de mise Kelly arrondissent desormais a l'euro
+le plus proche et rejettent le pari si le resultat est inferieur a
+1EUR. AVERTISSEMENT : tous les backtests anterieurs a cette correction
+supposaient des mises decimales continues - a re-verifier.
 =============================================================================
 """
 
-import sys
-import os
 import json
 import math
-import csv as csv_module
-from datetime import datetime, timezone, timedelta
-
+import os
 import requests
 
-sys.path.insert(0, os.path.dirname(__file__))
-from commun import (
-    charger_json, sauvegarder_json, envoyer_telegram,
-    calculer_proba_avec_contributions, calculer_proba_v18_avec_contributions,
-    calculer_proba_v110_ou_place_avec_contributions,
-    get_driver_forme, get_biais_hippodrome, get_speed_figure_avant_course,
-    get_ecart_corde, extraire_cote_directe, extraire_deferre_4_pieds,
-    extraire_age, extraire_indicateur_femelle, extraire_taux_victoire_carriere,
-    get_dernier_rang, get_sire_forme, charger_table_pedigree,
-    get_bankroll, calculer_mise, calculer_mise_v18, calculer_mise_v110,
-    calculer_mise_place, calculer_mise_2favori, calculer_mise_v14sire,
-    arrondir_mise_euro, MISE_MINIMUM,
-)
 
-RACINE = os.path.join(os.path.dirname(__file__), "..")
-
-SEUIL_EV = 0.10
-FENETRE_MIN_MINUTES = 15
-FENETRE_MAX_MINUTES = 40
-SEUIL_OUTSIDER_DUTCHING = 8.0
+def charger_json(chemin, defaut=None):
+    if os.path.exists(chemin):
+        with open(chemin, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return defaut if defaut is not None else {}
 
 
-def recuperer_programme_du_jour(date_str):
-    url = f"https://online.turfinfo.api.pmu.fr/rest/client/61/programme/{date_str}"
-    r = requests.get(url, timeout=35)
-    r.raise_for_status()
-    data = r.json()
-
-    courses = []
-    for reunion in data.get("programme", {}).get("reunions", []):
-        hippodrome = reunion.get("hippodrome", {}).get("libelleCourt", reunion.get("hippodrome", {}).get("libelle", "?"))
-        num_reunion = reunion.get("numOfficiel", reunion.get("numExterne"))
-        for course in reunion.get("courses", []):
-            courses.append({
-                "num_reunion": str(num_reunion),
-                "num_course": str(course.get("numOrdre", course.get("numExterne"))),
-                "discipline": course.get("discipline", ""),
-                "heure_depart_ms": course.get("heureDepart"),
-                "hippodrome": hippodrome,
-                "statut": course.get("statut", ""),
-                "corde": course.get("corde", ""),
-            })
-    return courses
+def sauvegarder_json(chemin, data):
+    with open(chemin, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
 
 
-def recuperer_participants(date_str, num_reunion, num_course):
-    url = (
-        f"https://online.turfinfo.api.pmu.fr/rest/client/61/programme/"
-        f"{date_str}/R{num_reunion}/C{num_course}/participants"
-    )
-    r = requests.get(url, timeout=20)
-    r.raise_for_status()
-    return r.json().get("participants", [])
+def envoyer_telegram(message):
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
 
-
-def calculer_dutching(cheval_outsider, cote_outsider, proba_outsider, ev_outsider,
-                       cheval_favori, cote_favori, bankroll_dutch,
-                       fonction_mise, *args_fonction_mise):
-    mise_totale = fonction_mise(proba_outsider, cote_outsider, bankroll_dutch, *args_fonction_mise)
-    if mise_totale <= 0:
-        return None
-    ratio = cote_outsider / cote_favori
-    mise_outsider_brute = mise_totale / (1 + ratio)
-    mise_favori_brute = mise_totale - mise_outsider_brute
-
-    mise_outsider = arrondir_mise_euro(mise_outsider_brute)
-    mise_favori = arrondir_mise_euro(mise_favori_brute)
-
-    if mise_outsider < MISE_MINIMUM or mise_favori < MISE_MINIMUM:
-        return None
-    return {
-        "cheval_outsider": cheval_outsider, "cote_outsider": cote_outsider,
-        "mise_outsider": mise_outsider,
-        "cheval_favori": cheval_favori, "cote_favori": cote_favori,
-        "mise_favori": mise_favori,
-        "ev_outsider": ev_outsider,
-    }
-
-
-def main():
-    maintenant = datetime.now(timezone.utc)
-    date_str = maintenant.strftime("%d%m%Y")
-
-    etat_drivers = charger_json(f"{RACINE}/etat_drivers.json", {})
-    etat_hippodromes = charger_json(f"{RACINE}/etat_hippodromes.json", {})
-    etat_chevaux = charger_json(f"{RACINE}/etat_chevaux.json", {})
-    etat_chevaux_corde = charger_json(f"{RACINE}/etat_chevaux_corde.json", {})
-    etat_dernier_rang = charger_json(f"{RACINE}/etat_dernier_rang.json", {})
-    etat_sire_forme = charger_json(f"{RACINE}/etat_sire_forme.json", {})
-    etat_pause = charger_json(f"{RACINE}/etat_pause.json", {})
-    table_pedigree = charger_table_pedigree(f"{RACINE}/pedigree_aplati.csv")
-    modele_v14 = charger_json(f"{RACINE}/modele_v14.json")
-    modele_v15 = charger_json(f"{RACINE}/modele_v15.json")
-    modele_v18 = charger_json(f"{RACINE}/modele_v18_production.json")
-    modele_v110 = charger_json(f"{RACINE}/modele_v110_production.json")
-    modele_place = charger_json(f"{RACINE}/modele_place_v1_production.json")
-    modele_2favori = charger_json(f"{RACINE}/modele_deuxieme_favori_v2_production.json")
-    modele_v14sire = charger_json(f"{RACINE}/modele_v14_sire_forme_production.json")
-    courses_notifiees = charger_json(f"{RACINE}/courses_notifiees.json", {})
-
-    bankroll_v14, chemin_bankroll_v14 = get_bankroll(RACINE, "v14")
-    bankroll_v14dutch, chemin_bankroll_v14dutch = get_bankroll(RACINE, "v14dutch")
-    bankroll_v14favori, chemin_bankroll_v14favori = get_bankroll(RACINE, "v14favori")
-    bankroll_v14sire, chemin_bankroll_v14sire = get_bankroll(RACINE, "v14sire")
-    bankroll_v15, chemin_bankroll_v15 = get_bankroll(RACINE, "v15")
-    bankroll_v18, chemin_bankroll_v18 = get_bankroll(RACINE, "v18")
-    bankroll_v110, chemin_bankroll_v110 = get_bankroll(RACINE, "v110")
-    bankroll_v110dutch, chemin_bankroll_v110dutch = get_bankroll(RACINE, "v110dutch")
-    bankroll_v110favori, chemin_bankroll_v110favori = get_bankroll(RACINE, "v110favori")
-    bankroll_place, chemin_bankroll_place = get_bankroll(RACINE, "place")
-    bankroll_2sur4, chemin_bankroll_2sur4 = get_bankroll(RACINE, "2sur4")
-    bankroll_trio, chemin_bankroll_trio = get_bankroll(RACINE, "trio")
-    bankroll_multi, chemin_bankroll_multi = get_bankroll(RACINE, "multi")
-    bankroll_2favori, chemin_bankroll_2favori = get_bankroll(RACINE, "2favori")
-    bankroll_couple_harville, chemin_bankroll_couple_harville = get_bankroll(RACINE, "couple_harville")
-    bankroll_consensus_place, chemin_bankroll_consensus_place = get_bankroll(RACINE, "consensus_place")
-
-    try:
-        courses = recuperer_programme_du_jour(date_str)
-    except Exception as e:
-        envoyer_telegram(f"Erreur recuperation programme du jour : {e}")
+    if not token or not chat_id:
+        print("ATTENTION : TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID manquant, message non envoye.")
+        print(message)
         return
-
-    log_paris = []
-
-    for course in courses:
-        if course["discipline"] not in ("ATTELE", "MONTE"):
-            continue
-
-        race_id = f"{date_str}_{course['num_reunion']}_{course['num_course']}"
-        if race_id in courses_notifiees:
-            continue
-
-        heure_depart_ms = course.get("heure_depart_ms")
-        if heure_depart_ms is None:
-            continue
-        heure_depart = datetime.fromtimestamp(heure_depart_ms / 1000, tz=timezone.utc)
-        minutes_avant_depart = (heure_depart - maintenant).total_seconds() / 60
-
-        if not (FENETRE_MIN_MINUTES <= minutes_avant_depart <= FENETRE_MAX_MINUTES):
-            continue
-
-        try:
-            participants = recuperer_participants(date_str, course["num_reunion"], course["num_course"])
-        except Exception as e:
-            print(f"Erreur participants {race_id} : {e}")
-            continue
-
-        nb_partants_course = sum(1 for p in participants if p.get("statut") == "PARTANT")
-
-        diag = {
-            "sans_cote": 0, "sans_sf": 0, "sans_driver_forme": 0,
-            "sans_biais_hippo": 0, "sans_ecart_corde": 0, "valides_pour_place": 0,
-        }
-
-        value_bets_v14 = []
-        value_bets_v14sire = []
-        value_bets_v15 = []
-        value_bets_v18 = []
-        value_bets_v110 = []
-        candidats_place = []
-        toutes_probas_v110 = []
-
-        partants_avec_cote = []
-
-        for p in participants:
-            if p.get("statut") != "PARTANT":
-                continue
-            cheval = p.get("nom")
-            num_pmu_cheval = p.get("numPmu")
-            driver = p.get("driver") or p.get("entraineur")
-            cote = extraire_cote_directe(p)
-
-            sf_avant = get_speed_figure_avant_course(etat_chevaux, cheval)
-            driver_forme = get_driver_forme(etat_drivers, driver)
-            biais_hippo = get_biais_hippodrome(etat_hippodromes, course["hippodrome"])
-
-            if cote is None or cote <= 1:
-                diag["sans_cote"] += 1
-            elif sf_avant is None:
-                diag["sans_sf"] += 1
-            elif driver_forme is None:
-                diag["sans_driver_forme"] += 1
-            elif biais_hippo is None:
-                diag["sans_biais_hippo"] += 1
-
-            if cote is None or cote <= 1:
-                continue
-
-            partants_avec_cote.append((cheval, cote))
-
-            log_cote = math.log(cote)
-
-            if sf_avant is not None and driver_forme is not None:
-                proba14, contrib14 = calculer_proba_avec_contributions(
-                    {"speed_figure_avant_course": sf_avant, "log_cote": log_cote, "driver_forme": driver_forme},
-                    modele_v14,
-                )
-                if proba14 is not None:
-                    ev14 = proba14 * cote - 1
-                    if ev14 > SEUIL_EV:
-                        mise14 = calculer_mise(proba14, cote, bankroll_v14)
-                        if mise14 > 0:
-                            value_bets_v14.append((cheval, cote, proba14, ev14, mise14))
-
-                pere = table_pedigree.get(cheval)
-                sire_forme = get_sire_forme(etat_sire_forme, pere)
-                if sire_forme is not None:
-                    proba14sire, contrib14sire = calculer_proba_avec_contributions(
-                        {
-                            "speed_figure_avant_course": sf_avant, "log_cote": log_cote,
-                            "driver_forme": driver_forme, "sire_forme": sire_forme,
-                        },
-                        modele_v14sire,
-                    )
-                    if proba14sire is not None:
-                        ev14sire = proba14sire * cote - 1
-                        if ev14sire > SEUIL_EV:
-                            mise14sire = calculer_mise_v14sire(proba14sire, cote, bankroll_v14sire)
-                            if mise14sire > 0:
-                                value_bets_v14sire.append((cheval, cote, proba14sire, ev14sire, mise14sire))
-
-            if sf_avant is not None and driver_forme is not None and biais_hippo is not None:
-                proba15, contrib15 = calculer_proba_avec_contributions(
-                    {
-                        "speed_figure_avant_course": sf_avant, "log_cote": log_cote,
-                        "driver_forme": driver_forme, "biais_hippodrome": biais_hippo,
-                    },
-                    modele_v15,
-                )
-                if proba15 is not None:
-                    ev15 = proba15 * cote - 1
-                    if ev15 > SEUIL_EV:
-                        mise15 = calculer_mise(proba15, cote, bankroll_v15)
-                        if mise15 > 0:
-                            value_bets_v15.append((cheval, cote, proba15, ev15, mise15))
-
-            ecart_corde = None
-            deferre_4_pieds = None
-            if sf_avant is not None and driver_forme is not None and biais_hippo is not None:
-                ecart_corde = get_ecart_corde(etat_chevaux_corde, etat_chevaux, cheval, course["corde"])
-                deferre_4_pieds = extraire_deferre_4_pieds(p)
-                proba18, contrib18 = calculer_proba_v18_avec_contributions(
-                    {
-                        "speed_figure_avant_course": sf_avant, "log_cote": log_cote,
-                        "driver_forme": driver_forme, "biais_hippodrome": biais_hippo,
-                        "nb_partants_course": nb_partants_course, "ecart_corde": ecart_corde,
-                        "deferre_4_pieds": deferre_4_pieds,
-                    },
-                    modele_v18,
-                )
-                if proba18 is not None:
-                    ev18 = proba18 * cote - 1
-                    if ev18 > SEUIL_EV:
-                        mise18 = calculer_mise_v18(proba18, cote, bankroll_v18, deferre_4_pieds)
-                        if mise18 > 0:
-                            value_bets_v18.append((cheval, cote, proba18, ev18, mise18, deferre_4_pieds))
-            else:
-                diag["sans_ecart_corde"] += 1
-
-            if sf_avant is not None and driver_forme is not None and biais_hippo is not None and ecart_corde is not None:
-                age = extraire_age(p)
-                indicateur_femelle = extraire_indicateur_femelle(p)
-                taux_victoire_carriere = extraire_taux_victoire_carriere(p)
-
-                valeurs_communes = {
-                    "speed_figure_avant_course": sf_avant, "log_cote": log_cote,
-                    "driver_forme": driver_forme, "biais_hippodrome": biais_hippo,
-                    "nb_partants_course": nb_partants_course, "ecart_corde": ecart_corde,
-                    "deferre_4_pieds": deferre_4_pieds, "age": age,
-                    "indicateur_femelle": indicateur_femelle,
-                    "taux_victoire_carriere": taux_victoire_carriere,
-                }
-
-                proba110, contrib110 = calculer_proba_v110_ou_place_avec_contributions(valeurs_communes, modele_v110)
-                if proba110 is not None:
-                    if num_pmu_cheval is not None:
-                        toutes_probas_v110.append((cheval, num_pmu_cheval, proba110))
-                    ev110 = proba110 * cote - 1
-                    if ev110 > SEUIL_EV:
-                        mise110 = calculer_mise_v110(proba110, cote, bankroll_v110, deferre_4_pieds)
-                        if mise110 > 0:
-                            value_bets_v110.append((cheval, cote, proba110, ev110, mise110, deferre_4_pieds))
-
-                proba_place, contrib_place = calculer_proba_v110_ou_place_avec_contributions(valeurs_communes, modele_place)
-                if proba_place is not None:
-                    candidats_place.append((cheval, proba_place, cote))
-
-        diag["valides_pour_place"] = len(candidats_place)
-
-        chemin_diag = f"{RACINE}/diagnostic_couverture.csv"
-        existe_diag = os.path.exists(chemin_diag)
-        with open(chemin_diag, "a", newline="", encoding="utf-8") as f:
-            writer_diag = csv_module.DictWriter(f, fieldnames=[
-                "race_id", "hippodrome", "nb_partants", "sans_cote", "sans_sf",
-                "sans_driver_forme", "sans_biais_hippo", "sans_ecart_corde",
-                "valides_pour_place", "date_verif",
-            ])
-            if not existe_diag:
-                writer_diag.writeheader()
-            writer_diag.writerow({
-                "race_id": race_id, "hippodrome": course["hippodrome"],
-                "nb_partants": nb_partants_course, **diag,
-                "date_verif": maintenant.isoformat(),
-            })
-
-        value_bets_place = []
-        meilleur_pick_place = None
-        if candidats_place:
-            meilleur = max(candidats_place, key=lambda x: x[1])
-            cheval_place, proba_place_choisi, _ = meilleur
-            meilleur_pick_place = cheval_place
-            mise_place = calculer_mise_place()
-            value_bets_place.append((cheval_place, proba_place_choisi, mise_place))
-
-        value_bets_deux_sur_quatre = []
-        if len(candidats_place) >= 2:
-            top2 = sorted(candidats_place, key=lambda x: x[1], reverse=True)[:2]
-            chevaux_choisis = [c[0] for c in top2]
-            mise_2sur4 = calculer_mise_place()
-            value_bets_deux_sur_quatre.append((chevaux_choisis, mise_2sur4))
-
-        value_bets_trio = []
-        if len(candidats_place) >= 3:
-            top3 = sorted(candidats_place, key=lambda x: x[1], reverse=True)[:3]
-            chevaux_choisis_trio = [c[0] for c in top3]
-            mise_trio = calculer_mise_place()
-            value_bets_trio.append((chevaux_choisis_trio, mise_trio))
-
-        value_bets_multi = []
-        type_multi = None
-        if nb_partants_course >= 14:
-            type_multi = "MULTI"
-        elif 10 <= nb_partants_course <= 13:
-            type_multi = "MINI_MULTI"
-        if type_multi and len(candidats_place) >= 4:
-            top4 = sorted(candidats_place, key=lambda x: x[1], reverse=True)[:4]
-            chevaux_choisis_multi = [c[0] for c in top4]
-            mise_multi = calculer_mise_place()
-            value_bets_multi.append((chevaux_choisis_multi, mise_multi, type_multi))
-
-        value_bets_2favori = []
-        if len(partants_avec_cote) >= 2:
-            partants_tries = sorted(partants_avec_cote, key=lambda x: x[1])
-            cheval_favori, cote_favori = partants_tries[0]
-            cheval_2favori, cote_2favori = partants_tries[1]
-
-            dernier_rang_favori = get_dernier_rang(etat_dernier_rang, cheval_favori)
-            favori_non_place_avant = dernier_rang_favori is not None and dernier_rang_favori > 3
-
-            if favori_non_place_avant:
-                p_2favori = next((p for p in participants if p.get("nom") == cheval_2favori), None)
-                if p_2favori is not None:
-                    driver_2fav = p_2favori.get("driver") or p_2favori.get("entraineur")
-                    sf_2fav = get_speed_figure_avant_course(etat_chevaux, cheval_2favori)
-                    driver_forme_2fav = get_driver_forme(etat_drivers, driver_2fav)
-                    biais_hippo_2fav = get_biais_hippodrome(etat_hippodromes, course["hippodrome"])
-                    log_cote_2fav = math.log(cote_2favori)
-
-                    if sf_2fav is not None and driver_forme_2fav is not None and biais_hippo_2fav is not None:
-                        proba_2favori, contrib_2favori = calculer_proba_avec_contributions(
-                            {
-                                "speed_figure_avant_course": sf_2fav, "log_cote": log_cote_2fav,
-                                "driver_forme": driver_forme_2fav, "biais_hippodrome": biais_hippo_2fav,
-                            },
-                            modele_2favori,
-                        )
-                        if proba_2favori is not None:
-                            ev_2favori = proba_2favori * cote_2favori - 1
-                            if ev_2favori > SEUIL_EV:
-                                mise_2favori = calculer_mise_2favori(proba_2favori, cote_2favori, bankroll_2favori)
-                                if mise_2favori > 0:
-                                    value_bets_2favori.append((cheval_2favori, cote_2favori, proba_2favori, ev_2favori, mise_2favori))
-
-        value_bets_v110favori = []
-        if partants_avec_cote and value_bets_v110:
-            cote_favori_marche = min(c for _, c in partants_avec_cote)
-            for item in value_bets_v110:
-                cheval_v110, cote_v110 = item[0], item[1]
-                if cote_v110 == cote_favori_marche:
-                    proba_v110, ev_v110, deferre_v110 = item[2], item[3], item[5]
-                    mise_v110favori = calculer_mise_v110(proba_v110, cote_v110, bankroll_v110favori, deferre_v110)
-                    if mise_v110favori > 0:
-                        value_bets_v110favori.append((cheval_v110, cote_v110, proba_v110, ev_v110, mise_v110favori, deferre_v110))
-
-        value_bets_v14favori = []
-        if partants_avec_cote and value_bets_v14:
-            cote_favori_marche = min(c for _, c in partants_avec_cote)
-            for item in value_bets_v14:
-                cheval_v14, cote_v14 = item[0], item[1]
-                if cote_v14 == cote_favori_marche:
-                    proba_v14, ev_v14 = item[2], item[3]
-                    mise_v14favori = calculer_mise(proba_v14, cote_v14, bankroll_v14favori)
-                    if mise_v14favori > 0:
-                        value_bets_v14favori.append((cheval_v14, cote_v14, proba_v14, ev_v14, mise_v14favori))
-
-        # --- CORRIGE : dutching sur TOUTES les opportunites qualifiees, pas seulement la 1ere ---
-        dutch_v14_liste = []
-        dutch_v110_liste = []
-        if partants_avec_cote:
-            favori_marche_nom, cote_favori_marche = min(partants_avec_cote, key=lambda x: x[1])
-
-            for item in value_bets_v14:
-                cheval_out, cote_out, proba_out, ev_out, _ = item
-                if cote_out >= SEUIL_OUTSIDER_DUTCHING and cheval_out != favori_marche_nom:
-                    resultat = calculer_dutching(
-                        cheval_out, cote_out, proba_out, ev_out,
-                        favori_marche_nom, cote_favori_marche, bankroll_v14dutch,
-                        calculer_mise,
-                    )
-                    if resultat:
-                        dutch_v14_liste.append(resultat)
-
-            for item in value_bets_v110:
-                cheval_out, cote_out, proba_out, ev_out = item[0], item[1], item[2], item[3]
-                deferre_out = item[5]
-                if cote_out >= SEUIL_OUTSIDER_DUTCHING and cheval_out != favori_marche_nom:
-                    resultat = calculer_dutching(
-                        cheval_out, cote_out, proba_out, ev_out,
-                        favori_marche_nom, cote_favori_marche, bankroll_v110dutch,
-                        calculer_mise_v110, deferre_out,
-                    )
-                    if resultat:
-                        dutch_v110_liste.append(resultat)
-
-        couple_harville_pick = None
-        if len(toutes_probas_v110) >= 2:
-            tries = sorted(toutes_probas_v110, key=lambda x: x[2], reverse=True)
-            cheval_1, num_pmu_1, proba_1 = tries[0]
-            cheval_2, num_pmu_2, proba_2 = tries[1]
-            mise_couple = calculer_mise_place()
-            couple_harville_pick = {
-                "cheval_1": cheval_1, "num_pmu_1": num_pmu_1,
-                "cheval_2": cheval_2, "num_pmu_2": num_pmu_2,
-                "mise": mise_couple,
-            }
-
-        consensus_place_pick = None
-        if meilleur_pick_place is not None and value_bets_v110:
-            for item in value_bets_v110:
-                cheval_v110, cote_v110, proba_v110, ev_v110, deferre_v110 = item[0], item[1], item[2], item[3], item[5]
-                if cheval_v110 == meilleur_pick_place:
-                    mise_consensus = calculer_mise_v110(proba_v110, cote_v110, bankroll_consensus_place, deferre_v110)
-                    if mise_consensus > 0:
-                        consensus_place_pick = (cheval_v110, cote_v110, proba_v110, ev_v110, mise_consensus)
-                    break
-
-        sections_msg = []
-        if value_bets_v14 and not etat_pause.get("v14", False):
-            bloc = f"<b>Modele v1.4</b> (bankroll : {bankroll_v14:.0f}EUR) :\n"
-            for cheval, cote, proba, ev, mise in value_bets_v14:
-                bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
-            sections_msg.append(bloc)
-        if dutch_v14_liste and not etat_pause.get("v14dutch", False):
-            bloc = f"<b>Modele v1.4-DUTCH</b> (bankroll : {bankroll_v14dutch:.0f}EUR, {len(dutch_v14_liste)} opportunite(s)) :\n"
-            for d in dutch_v14_liste:
-                bloc += f"- Outsider {d['cheval_outsider']} (cote {d['cote_outsider']:.1f}) - <b>mise {d['mise_outsider']:.0f}EUR</b>\n"
-                bloc += f"  + Favori {d['cheval_favori']} (cote {d['cote_favori']:.1f}) - <b>mise {d['mise_favori']:.0f}EUR</b>\n"
-            sections_msg.append(bloc)
-        if value_bets_v14favori and not etat_pause.get("v14favori", False):
-            bloc = f"<b>Modele v1.4-FAVORI</b> (bankroll : {bankroll_v14favori:.0f}EUR) :\n"
-            for cheval, cote, proba, ev, mise in value_bets_v14favori:
-                bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
-            sections_msg.append(bloc)
-        if value_bets_v14sire and not etat_pause.get("v14sire", False):
-            bloc = f"<b>Modele v1.4+GENEALOGIE</b> (bankroll : {bankroll_v14sire:.0f}EUR) :\n"
-            for cheval, cote, proba, ev, mise in value_bets_v14sire:
-                bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
-            sections_msg.append(bloc)
-        if value_bets_v15 and not etat_pause.get("v15", False):
-            bloc = f"<b>Modele v1.5</b> (bankroll : {bankroll_v15:.0f}EUR) :\n"
-            for cheval, cote, proba, ev, mise in value_bets_v15:
-                bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
-            sections_msg.append(bloc)
-        if value_bets_v18 and not etat_pause.get("v18", False):
-            bloc = f"<b>Modele v1.8</b> (bankroll : {bankroll_v18:.0f}EUR) :\n"
-            for cheval, cote, proba, ev, mise, d4 in value_bets_v18:
-                marque_d4 = " [D4]" if d4 else ""
-                bloc += f"- {cheval}{marque_d4} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
-            sections_msg.append(bloc)
-        if value_bets_v110 and not etat_pause.get("v110", False):
-            bloc = f"<b>Modele v1.10</b> (bankroll : {bankroll_v110:.0f}EUR) :\n"
-            for cheval, cote, proba, ev, mise, d4 in value_bets_v110:
-                marque_d4 = " [D4]" if d4 else ""
-                bloc += f"- {cheval}{marque_d4} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
-            sections_msg.append(bloc)
-        if dutch_v110_liste and not etat_pause.get("v110dutch", False):
-            bloc = f"<b>Modele v1.10-DUTCH</b> (bankroll : {bankroll_v110dutch:.0f}EUR, {len(dutch_v110_liste)} opportunite(s)) :\n"
-            for d in dutch_v110_liste:
-                bloc += f"- Outsider {d['cheval_outsider']} (cote {d['cote_outsider']:.1f}) - <b>mise {d['mise_outsider']:.0f}EUR</b>\n"
-                bloc += f"  + Favori {d['cheval_favori']} (cote {d['cote_favori']:.1f}) - <b>mise {d['mise_favori']:.0f}EUR</b>\n"
-            sections_msg.append(bloc)
-        if value_bets_v110favori and not etat_pause.get("v110favori", False):
-            bloc = f"<b>Modele v1.10-FAVORI</b> (bankroll : {bankroll_v110favori:.0f}EUR) :\n"
-            for cheval, cote, proba, ev, mise, d4 in value_bets_v110favori:
-                bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
-            sections_msg.append(bloc)
-        if consensus_place_pick and not etat_pause.get("consensus_place", False):
-            cheval, cote, proba, ev, mise = consensus_place_pick
-            bloc = f"<b>Modele CONSENSUS-PLACE</b> (bankroll : {bankroll_consensus_place:.0f}EUR) :\n"
-            bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
-            sections_msg.append(bloc)
-        if couple_harville_pick and not etat_pause.get("couple_harville", False):
-            bloc = f"<b>Modele COUPLE-HARVILLE</b> (bankroll : {bankroll_couple_harville:.0f}EUR) :\n"
-            bloc += f"- {couple_harville_pick['cheval_1']} + {couple_harville_pick['cheval_2']} - <b>mise {couple_harville_pick['mise']:.0f}EUR</b>\n"
-            sections_msg.append(bloc)
-        if value_bets_place and not etat_pause.get("place", False):
-            bloc = f"<b>Modele PLACE</b> (bankroll : {bankroll_place:.0f}EUR, top pick, mise fixe) :\n"
-            for cheval, proba, mise in value_bets_place:
-                bloc += f"- {cheval} - proba place {proba:.1%}, <b>mise {mise:.0f}EUR</b>\n"
-            sections_msg.append(bloc)
-        if value_bets_deux_sur_quatre and not etat_pause.get("2sur4", False):
-            bloc = f"<b>Modele 2 SUR 4</b> (bankroll : {bankroll_2sur4:.0f}EUR, top 2, mise fixe) :\n"
-            for chevaux, mise in value_bets_deux_sur_quatre:
-                bloc += f"- {' + '.join(chevaux)} - <b>mise {mise:.0f}EUR</b>\n"
-            sections_msg.append(bloc)
-        if value_bets_trio and not etat_pause.get("trio", False):
-            bloc = f"<b>Modele TRIO</b> (bankroll : {bankroll_trio:.0f}EUR, top 3, mise fixe) :\n"
-            for chevaux, mise in value_bets_trio:
-                bloc += f"- {' + '.join(chevaux)} - <b>mise {mise:.0f}EUR</b>\n"
-            sections_msg.append(bloc)
-        if value_bets_multi and not etat_pause.get("multi", False):
-            bloc = f"<b>Modele {type_multi}</b> (bankroll : {bankroll_multi:.0f}EUR, top 4, mise fixe) :\n"
-            for chevaux, mise, type_pari in value_bets_multi:
-                bloc += f"- {' + '.join(chevaux)} - <b>mise {mise:.0f}EUR</b>\n"
-            sections_msg.append(bloc)
-        if value_bets_2favori and not etat_pause.get("2favori", False):
-            bloc = f"<b>Modele 2E FAVORI</b> (bankroll : {bankroll_2favori:.0f}EUR) :\n"
-            for cheval, cote, proba, ev, mise in value_bets_2favori:
-                bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
-            sections_msg.append(bloc)
-
-        if sections_msg:
-            msg = f"<b>Course {course['hippodrome']} R{course['num_reunion']}C{course['num_course']}</b>\n"
-            msg += f"Depart dans ~{int(minutes_avant_depart)} min\n\n"
-            msg += "\n".join(sections_msg)
-            envoyer_telegram(msg)
-
-        for cheval, cote, proba, ev, mise in value_bets_v14:
-            log_paris.append({"race_id": race_id, "modele": "v1.4", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
-        for d in dutch_v14_liste:
-            log_paris.append({"race_id": race_id, "modele": "v14dutch", "cheval": d["cheval_outsider"], "cote": d["cote_outsider"], "cote_cloture": "", "ev": d["ev_outsider"], "mise": d["mise_outsider"], "date_detection": maintenant.isoformat()})
-            log_paris.append({"race_id": race_id, "modele": "v14dutch", "cheval": d["cheval_favori"], "cote": d["cote_favori"], "cote_cloture": "", "ev": "", "mise": d["mise_favori"], "date_detection": maintenant.isoformat()})
-        for cheval, cote, proba, ev, mise in value_bets_v14favori:
-            log_paris.append({"race_id": race_id, "modele": "v14favori", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
-        for cheval, cote, proba, ev, mise in value_bets_v14sire:
-            log_paris.append({"race_id": race_id, "modele": "v14sire", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
-        for cheval, cote, proba, ev, mise in value_bets_v15:
-            log_paris.append({"race_id": race_id, "modele": "v1.5", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
-        for cheval, cote, proba, ev, mise, d4 in value_bets_v18:
-            log_paris.append({"race_id": race_id, "modele": "v1.8", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
-        for cheval, cote, proba, ev, mise, d4 in value_bets_v110:
-            log_paris.append({"race_id": race_id, "modele": "v1.10", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
-        for d in dutch_v110_liste:
-            log_paris.append({"race_id": race_id, "modele": "v110dutch", "cheval": d["cheval_outsider"], "cote": d["cote_outsider"], "cote_cloture": "", "ev": d["ev_outsider"], "mise": d["mise_outsider"], "date_detection": maintenant.isoformat()})
-            log_paris.append({"race_id": race_id, "modele": "v110dutch", "cheval": d["cheval_favori"], "cote": d["cote_favori"], "cote_cloture": "", "ev": "", "mise": d["mise_favori"], "date_detection": maintenant.isoformat()})
-        for cheval, cote, proba, ev, mise, d4 in value_bets_v110favori:
-            log_paris.append({"race_id": race_id, "modele": "v110favori", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
-        if consensus_place_pick:
-            cheval, cote, proba, ev, mise = consensus_place_pick
-            log_paris.append({"race_id": race_id, "modele": "consensus_place", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
-        if couple_harville_pick:
-            chevaux_str = f"{couple_harville_pick['cheval_1']}|{couple_harville_pick['cheval_2']}"
-            nums_str = f"{couple_harville_pick['num_pmu_1']}-{couple_harville_pick['num_pmu_2']}"
-            log_paris.append({"race_id": race_id, "modele": "couple_harville", "cheval": chevaux_str, "cote": nums_str, "cote_cloture": "", "ev": "", "mise": couple_harville_pick["mise"], "date_detection": maintenant.isoformat()})
-        for cheval, proba, mise in value_bets_place:
-            log_paris.append({"race_id": race_id, "modele": "place", "cheval": cheval, "cote": "", "cote_cloture": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
-        for chevaux, mise in value_bets_deux_sur_quatre:
-            log_paris.append({"race_id": race_id, "modele": "2sur4", "cheval": "|".join(chevaux), "cote": "", "cote_cloture": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
-        for chevaux, mise in value_bets_trio:
-            log_paris.append({"race_id": race_id, "modele": "trio", "cheval": "|".join(chevaux), "cote": "", "cote_cloture": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
-        for chevaux, mise, type_pari in value_bets_multi:
-            log_paris.append({"race_id": race_id, "modele": "multi", "cheval": "|".join(chevaux), "cote": type_pari, "cote_cloture": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
-        for cheval, cote, proba, ev, mise in value_bets_2favori:
-            log_paris.append({"race_id": race_id, "modele": "2favori", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
-
-        courses_notifiees[race_id] = {
-            "date_notif": maintenant.isoformat(),
-            "hippodrome": course["hippodrome"],
-            "corde": course.get("corde", ""),
-        }
-
-    sauvegarder_json(f"{RACINE}/courses_notifiees.json", courses_notifiees)
-
-    if log_paris:
-        chemin_log = f"{RACINE}/paris_virtuels.csv"
-        existe = os.path.exists(chemin_log)
-        import csv
-        with open(chemin_log, "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=[
-                "race_id", "modele", "cheval", "cote", "cote_cloture", "ev", "mise",
-                "date_detection", "resultat", "gain_euros",
-            ])
-            if not existe:
-                writer.writeheader()
-            for ligne in log_paris:
-                ligne["resultat"] = ""
-                ligne["gain_euros"] = ""
-                writer.writerow(ligne)
-
-    print(f"Verification terminee. {len(log_paris)} value bets detectes.")
-
-
-if __name__ == "__main__":
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
     try:
-        main()
+        r = requests.post(url, data={"chat_id": chat_id, "text": message, "parse_mode": "HTML"}, timeout=15)
+        if r.status_code != 200:
+            print(f"Erreur envoi Telegram ({r.status_code}) : {r.text}")
     except Exception as e:
-        import traceback
-        detail = traceback.format_exc()[-500:]
-        detail_echappe = detail.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        envoyer_telegram(f"Erreur dans verifier_a_venir.py\n\n{e}\n\n{detail_echappe}")
-        raise
+        print(f"Exception envoi Telegram : {e}")
+
+
+def sigmoid(x):
+    try:
+        return 1 / (1 + math.exp(-x))
+    except OverflowError:
+        return 0.0 if x < 0 else 1.0
+
+
+def calculer_proba(valeurs_brutes, modele):
+    coefs = modele["coefficients"]
+    norm = modele["normalisation"]
+    z = coefs.get("const", 0.0)
+
+    for var in modele["variables_brutes"]:
+        if var not in valeurs_brutes or valeurs_brutes[var] is None:
+            return None
+        moyenne = norm[var]["moyenne"]
+        ecart_type = norm[var]["ecart_type"]
+        valeur_std = (valeurs_brutes[var] - moyenne) / ecart_type
+        z += coefs.get(var + "_std", 0.0) * valeur_std
+
+    return sigmoid(z)
+
+
+def calculer_proba_v18(valeurs_brutes, modele_v18):
+    coefs = modele_v18["coefficients"]
+    norm = modele_v18["standardisation"]
+
+    requis = ["speed_figure_avant_course", "driver_forme", "biais_hippodrome",
+              "nb_partants_course", "ecart_corde", "log_cote", "deferre_4_pieds"]
+    for var in requis:
+        if var not in valeurs_brutes or valeurs_brutes[var] is None:
+            return None
+
+    def std(var):
+        m = norm[var]["moyenne"]
+        s = norm[var]["ecart_type"]
+        return (valeurs_brutes[var] - m) / s
+
+    sf_std = std("speed_figure_avant_course")
+    driver_std = std("driver_forme")
+    hippo_std = std("biais_hippodrome")
+    nb_partants_std = std("nb_partants_course")
+    ecart_corde_std = std("ecart_corde")
+    interaction = sf_std * driver_std
+
+    z = coefs.get("const", 0.0)
+    z += coefs.get("sf_std", 0.0) * sf_std
+    z += coefs.get("log_cote", 0.0) * valeurs_brutes["log_cote"]
+    z += coefs.get("driver_std", 0.0) * driver_std
+    z += coefs.get("hippo_std", 0.0) * hippo_std
+    z += coefs.get("interaction_sf_driver", 0.0) * interaction
+    z += coefs.get("nb_partants_std", 0.0) * nb_partants_std
+    z += coefs.get("ecart_corde_std", 0.0) * ecart_corde_std
+    z += coefs.get("deferre_4_pieds", 0.0) * valeurs_brutes["deferre_4_pieds"]
+
+    return sigmoid(z)
+
+
+def calculer_proba_v110_ou_place(valeurs_brutes, modele):
+    coefs = modele["coefficients"]
+    norm = modele["moyennes_ecarts_types"]
+
+    requis = ["speed_figure_avant_course", "driver_forme", "biais_hippodrome",
+              "nb_partants_course", "ecart_corde", "age", "taux_victoire_carriere"]
+    for var in requis:
+        if var not in valeurs_brutes or valeurs_brutes[var] is None:
+            return None
+
+    def std(var):
+        m = norm[var]["moyenne"]
+        s = norm[var]["ecart_type"]
+        return (valeurs_brutes[var] - m) / s
+
+    sf_std = std("speed_figure_avant_course")
+    driver_std = std("driver_forme")
+    hippo_std = std("biais_hippodrome")
+    nb_partants_std = std("nb_partants_course")
+    ecart_corde_std = std("ecart_corde")
+    age_std = std("age")
+    taux_victoire_std = std("taux_victoire_carriere")
+    interaction = sf_std * driver_std
+
+    z = coefs.get("const", 0.0)
+    z += coefs.get("sf_std", 0.0) * sf_std
+    z += coefs.get("log_cote", 0.0) * valeurs_brutes["log_cote"]
+    z += coefs.get("driver_std", 0.0) * driver_std
+    z += coefs.get("hippo_std", 0.0) * hippo_std
+    z += coefs.get("interaction_sf_driver", 0.0) * interaction
+    z += coefs.get("nb_partants_std", 0.0) * nb_partants_std
+    z += coefs.get("ecart_corde_std", 0.0) * ecart_corde_std
+    z += coefs.get("deferre_4_pieds", 0.0) * valeurs_brutes["deferre_4_pieds"]
+    z += coefs.get("age_std", 0.0) * age_std
+    z += coefs.get("indicateur_femelle", 0.0) * valeurs_brutes["indicateur_femelle"]
+    z += coefs.get("taux_victoire_std", 0.0) * taux_victoire_std
+
+    return sigmoid(z)
+
+
+def extraire_age(participant):
+    return participant.get("age")
+
+
+def extraire_indicateur_femelle(participant):
+    return 1 if participant.get("sexe") == "FEMELLES" else 0
+
+
+def extraire_taux_victoire_carriere(participant):
+    nb_courses = participant.get("nombreCourses")
+    nb_victoires = participant.get("nombreVictoires")
+    if not nb_courses or nb_courses == 0:
+        return None
+    return nb_victoires / nb_courses
+
+
+FENETRE_DRIVER = 100
+FENETRE_HIPPODROME = 200
+FENETRE_CHEVAL = 3
+MIN_DRIVER = 20
+MIN_HIPPODROME = 10
+
+
+def get_driver_forme(etat_drivers, driver):
+    historique = etat_drivers.get(driver, [])
+    if len(historique) < MIN_DRIVER:
+        return None
+    return sum(historique) / len(historique)
+
+
+def maj_driver(etat_drivers, driver, victoire):
+    historique = etat_drivers.get(driver, [])
+    historique.append(victoire)
+    etat_drivers[driver] = historique[-FENETRE_DRIVER:]
+
+
+def get_biais_hippodrome(etat_hippodromes, hippodrome):
+    donnees = etat_hippodromes.get(hippodrome)
+    if donnees is None:
+        return None
+    nb_total = sum(donnees["nb_partants"])
+    if nb_total < MIN_HIPPODROME:
+        return None
+    return sum(donnees["sommes_ecart"]) / nb_total
+
+
+def maj_hippodrome(etat_hippodromes, hippodrome, somme_ecart_course, nb_partants_course):
+    donnees = etat_hippodromes.get(hippodrome, {"sommes_ecart": [], "nb_partants": []})
+    donnees["sommes_ecart"].append(somme_ecart_course)
+    donnees["nb_partants"].append(nb_partants_course)
+    donnees["sommes_ecart"] = donnees["sommes_ecart"][-FENETRE_HIPPODROME:]
+    donnees["nb_partants"] = donnees["nb_partants"][-FENETRE_HIPPODROME:]
+    etat_hippodromes[hippodrome] = donnees
+
+
+def get_speed_figure_avant_course(etat_chevaux, cheval):
+    historique = etat_chevaux.get(cheval, [])
+    if len(historique) == 0:
+        return None
+    return sum(historique) / len(historique)
+
+
+def maj_cheval(etat_chevaux, cheval, speed_figure_brut):
+    historique = etat_chevaux.get(cheval, [])
+    historique.append(speed_figure_brut)
+    etat_chevaux[cheval] = historique[-FENETRE_CHEVAL:]
+
+
+FENETRE_CORDE = 5
+MIN_CORDE = 2
+
+
+def get_ecart_corde(etat_chevaux_corde, etat_chevaux, cheval, corde_du_jour):
+    donnees = etat_chevaux_corde.get(cheval, {})
+    historique_corde = donnees.get(corde_du_jour, [])
+    if len(historique_corde) < MIN_CORDE:
+        return 0.0
+    sf_corde_specifique = sum(historique_corde) / len(historique_corde)
+    sf_general = get_speed_figure_avant_course(etat_chevaux, cheval)
+    if sf_general is None:
+        return 0.0
+    return sf_corde_specifique - sf_general
+
+
+def maj_cheval_corde(etat_chevaux_corde, cheval, corde, speed_figure_brut):
+    if corde not in ("CORDE_GAUCHE", "CORDE_DROITE"):
+        return
+    donnees = etat_chevaux_corde.get(cheval, {"CORDE_GAUCHE": [], "CORDE_DROITE": []})
+    historique = donnees.get(corde, [])
+    historique.append(speed_figure_brut)
+    donnees[corde] = historique[-FENETRE_CORDE:]
+    etat_chevaux_corde[cheval] = donnees
+
+
+def get_dernier_rang(etat_dernier_rang, cheval):
+    return etat_dernier_rang.get(cheval)
+
+
+def maj_dernier_rang(etat_dernier_rang, cheval, rang_arrivee):
+    etat_dernier_rang[cheval] = rang_arrivee
+
+
+FENETRE_SIRE = 100
+MIN_SIRE = 15
+
+
+def get_sire_forme(etat_sire_forme, pere):
+    if not pere:
+        return None
+    historique = etat_sire_forme.get(pere, [])
+    if len(historique) < MIN_SIRE:
+        return None
+    return sum(historique) / len(historique)
+
+
+def maj_sire_forme(etat_sire_forme, pere, victoire):
+    if not pere:
+        return
+    historique = etat_sire_forme.get(pere, [])
+    historique.append(victoire)
+    etat_sire_forme[pere] = historique[-FENETRE_SIRE:]
+
+
+def charger_table_pedigree(chemin_csv):
+    import csv as csv_module
+    table = {}
+    try:
+        with open(chemin_csv, "r", encoding="utf-8") as f:
+            reader = csv_module.DictReader(f)
+            for ligne in reader:
+                if ligne.get("pere"):
+                    table[ligne["nom_pmu"]] = ligne["pere"]
+    except FileNotFoundError:
+        pass
+    return table
+
+
+def extraire_cote_directe(participant):
+    rapport = participant.get("dernierRapportDirect")
+    if rapport and rapport.get("typePari") == "SIMPLE_GAGNANT":
+        return rapport.get("rapport")
+    return None
+
+
+def extraire_deferre_4_pieds(participant):
+    return 1 if participant.get("deferre") == "DEFERRE_ANTERIEURS_POSTERIEURS" else 0
+
+
+FRACTION_KELLY = 0.10
+FRACTION_KELLY_D4 = 0.05
+MISE_MINIMUM = 1.0  # CORRIGE (21 aout) : 1EUR confirme sur l'app reelle, pas 1.50EUR
+BANKROLL_DEPART = 1236
+MISE_FIXE_PLACE = 10
+
+PALIERS_PLAFOND = [
+    (5000, 20),
+    (20000, 50),
+    (50000, 100),
+    (150000, 250),
+    (float("inf"), 500),
+]
+
+PLAFOND_GAIN_PMU = 100000
+
+
+def arrondir_mise_euro(mise):
+    """CORRECTION (21 aout) : le PMU n'accepte que des montants entiers
+    en euros, minimum 1EUR - confirme par test direct sur l'application
+    reelle. Arrondit a l'euro le plus proche, rejette (retourne 0.0) si
+    le resultat est inferieur a 1EUR."""
+    mise_arrondie = round(mise)
+    if mise_arrondie < MISE_MINIMUM:
+        return 0.0
+    return float(mise_arrondie)
+
+
+def obtenir_plafond_dynamique(bankroll):
+    for seuil, plafond in PALIERS_PLAFOND:
+        if bankroll < seuil:
+            return plafond
+    return PALIERS_PLAFOND[-1][1]
+
+
+def get_bankroll(racine, nom_modele):
+    chemin = f"{racine}/bankroll_{nom_modele}.json"
+    data = charger_json(chemin, {"bankroll": BANKROLL_DEPART})
+    return data["bankroll"], chemin
+
+
+def calculer_mise(proba, cote, bankroll):
+    b = cote - 1
+    if b <= 0:
+        return 0.0
+    kelly_full = max(0.0, (proba * b - (1 - proba)) / b)
+    kelly_fraction = kelly_full * FRACTION_KELLY
+    plafond_palier = obtenir_plafond_dynamique(bankroll)
+    plafond_gain = PLAFOND_GAIN_PMU / cote
+    mise = min(kelly_fraction * bankroll, plafond_palier, plafond_gain)
+    return arrondir_mise_euro(mise)
+
+
+def calculer_mise_v18(proba, cote, bankroll, est_deferre_4_pieds):
+    b = cote - 1
+    if b <= 0:
+        return 0.0
+    kelly_full = max(0.0, (proba * b - (1 - proba)) / b)
+    fraction = FRACTION_KELLY_D4 if est_deferre_4_pieds else FRACTION_KELLY
+    kelly_fraction = kelly_full * fraction
+    plafond_palier = obtenir_plafond_dynamique(bankroll)
+    plafond_gain = PLAFOND_GAIN_PMU / cote
+    mise = min(kelly_fraction * bankroll, plafond_palier, plafond_gain)
+    return arrondir_mise_euro(mise)
+
+
+def calculer_mise_v110(proba, cote, bankroll, est_deferre_4_pieds):
+    b = cote - 1
+    if b <= 0:
+        return 0.0
+    kelly_full = max(0.0, (proba * b - (1 - proba)) / b)
+    fraction = FRACTION_KELLY_D4 if est_deferre_4_pieds else FRACTION_KELLY
+    kelly_fraction = kelly_full * fraction
+    plafond_palier = obtenir_plafond_dynamique(bankroll)
+    plafond_gain = PLAFOND_GAIN_PMU / cote
+    mise = min(kelly_fraction * bankroll, plafond_palier, plafond_gain)
+    return arrondir_mise_euro(mise)
+
+
+def calculer_mise_place():
+    return float(MISE_FIXE_PLACE)
+
+
+def calculer_mise_2favori(proba, cote, bankroll):
+    b = cote - 1
+    if b <= 0:
+        return 0.0
+    kelly_full = max(0.0, (proba * b - (1 - proba)) / b)
+    kelly_fraction = kelly_full * FRACTION_KELLY
+    plafond_palier = obtenir_plafond_dynamique(bankroll)
+    plafond_gain = PLAFOND_GAIN_PMU / cote
+    mise = min(kelly_fraction * bankroll, plafond_palier, plafond_gain)
+    return arrondir_mise_euro(mise)
+
+
+def calculer_mise_v14sire(proba, cote, bankroll):
+    b = cote - 1
+    if b <= 0:
+        return 0.0
+    kelly_full = max(0.0, (proba * b - (1 - proba)) / b)
+    kelly_fraction = kelly_full * FRACTION_KELLY
+    plafond_palier = obtenir_plafond_dynamique(bankroll)
+    plafond_gain = PLAFOND_GAIN_PMU / cote
+    mise = min(kelly_fraction * bankroll, plafond_palier, plafond_gain)
+    return arrondir_mise_euro(mise)
+
+
+def mettre_a_jour_bankroll(chemin, nouvelle_bankroll):
+    sauvegarder_json(chemin, {"bankroll": round(nouvelle_bankroll, 2)})
+
+
+def calculer_proba_avec_contributions(valeurs_brutes, modele):
+    coefs = modele["coefficients"]
+    norm = modele["normalisation"]
+    contributions = {}
+    z = coefs.get("const", 0.0)
+
+    for var in modele["variables_brutes"]:
+        if var not in valeurs_brutes or valeurs_brutes[var] is None:
+            return None, {}
+        moyenne = norm[var]["moyenne"]
+        ecart_type = norm[var]["ecart_type"]
+        valeur_std = (valeurs_brutes[var] - moyenne) / ecart_type
+        contribution = coefs.get(var + "_std", 0.0) * valeur_std
+        contributions[var] = contribution
+        z += contribution
+
+    return sigmoid(z), contributions
+
+
+def calculer_proba_v18_avec_contributions(valeurs_brutes, modele_v18):
+    coefs = modele_v18["coefficients"]
+    norm = modele_v18["standardisation"]
+
+    requis = ["speed_figure_avant_course", "driver_forme", "biais_hippodrome",
+              "nb_partants_course", "ecart_corde", "log_cote", "deferre_4_pieds"]
+    for var in requis:
+        if var not in valeurs_brutes or valeurs_brutes[var] is None:
+            return None, {}
+
+    def std(var):
+        m = norm[var]["moyenne"]
+        s = norm[var]["ecart_type"]
+        return (valeurs_brutes[var] - m) / s
+
+    sf_std = std("speed_figure_avant_course")
+    driver_std = std("driver_forme")
+    hippo_std = std("biais_hippodrome")
+    nb_partants_std = std("nb_partants_course")
+    ecart_corde_std = std("ecart_corde")
+    interaction = sf_std * driver_std
+
+    contributions = {
+        "vitesse_recente": coefs.get("sf_std", 0.0) * sf_std,
+        "cote_marche": coefs.get("log_cote", 0.0) * valeurs_brutes["log_cote"],
+        "driver": coefs.get("driver_std", 0.0) * driver_std,
+        "hippodrome": coefs.get("hippo_std", 0.0) * hippo_std,
+        "interaction_cheval_driver": coefs.get("interaction_sf_driver", 0.0) * interaction,
+        "nb_partants": coefs.get("nb_partants_std", 0.0) * nb_partants_std,
+        "corde": coefs.get("ecart_corde_std", 0.0) * ecart_corde_std,
+        "deferrage": coefs.get("deferre_4_pieds", 0.0) * valeurs_brutes["deferre_4_pieds"],
+    }
+    z = coefs.get("const", 0.0) + sum(contributions.values())
+    return sigmoid(z), contributions
+
+
+def calculer_proba_v110_ou_place_avec_contributions(valeurs_brutes, modele):
+    coefs = modele["coefficients"]
+    norm = modele["moyennes_ecarts_types"]
+
+    requis = ["speed_figure_avant_course", "driver_forme", "biais_hippodrome",
+              "nb_partants_course", "ecart_corde", "age", "taux_victoire_carriere"]
+    for var in requis:
+        if var not in valeurs_brutes or valeurs_brutes[var] is None:
+            return None, {}
+
+    def std(var):
+        m = norm[var]["moyenne"]
+        s = norm[var]["ecart_type"]
+        return (valeurs_brutes[var] - m) / s
+
+    sf_std = std("speed_figure_avant_course")
+    driver_std = std("driver_forme")
+    hippo_std = std("biais_hippodrome")
+    nb_partants_std = std("nb_partants_course")
+    ecart_corde_std = std("ecart_corde")
+    age_std = std("age")
+    taux_victoire_std = std("taux_victoire_carriere")
+    interaction = sf_std * driver_std
+
+    contributions = {
+        "vitesse_recente": coefs.get("sf_std", 0.0) * sf_std,
+        "cote_marche": coefs.get("log_cote", 0.0) * valeurs_brutes["log_cote"],
+        "driver": coefs.get("driver_std", 0.0) * driver_std,
+        "hippodrome": coefs.get("hippo_std", 0.0) * hippo_std,
+        "interaction_cheval_driver": coefs.get("interaction_sf_driver", 0.0) * interaction,
+        "nb_partants": coefs.get("nb_partants_std", 0.0) * nb_partants_std,
+        "corde": coefs.get("ecart_corde_std", 0.0) * ecart_corde_std,
+        "deferrage": coefs.get("deferre_4_pieds", 0.0) * valeurs_brutes["deferre_4_pieds"],
+        "age": coefs.get("age_std", 0.0) * age_std,
+        "sexe_femelle": coefs.get("indicateur_femelle", 0.0) * valeurs_brutes["indicateur_femelle"],
+        "taux_victoire_carriere": coefs.get("taux_victoire_std", 0.0) * taux_victoire_std,
+    }
+    z = coefs.get("const", 0.0) + sum(contributions.values())
+    return sigmoid(z), contributions
+
+
+def formater_contributions(contributions, top_n=3):
+    if not contributions:
+        return ""
+    tries = sorted(contributions.items(), key=lambda x: abs(x[1]), reverse=True)[:top_n]
+    parties = [f"{nom}:{val:+.2f}" for nom, val in tries]
+    return " (" + ", ".join(parties) + ")"
