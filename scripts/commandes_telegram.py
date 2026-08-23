@@ -68,14 +68,17 @@ REFERENCE_BACKTEST = {
     "2favori": {"n": 2645, "roi": 0.2501},
 }
 
+SEUIL_MIN_PARIS_STATUT = 50
+
 TEXTE_AIDE = (
     "<b>Commandes disponibles</b>\n\n"
+    "/statut — indicateur combine par strategie (IC95% + CLV, emoji vert/rouge/neutre)\n"
     "/bankroll — bankrolls actuelles des 16 strategies\n"
     "/bilan — bilan du jour (gain, perte, ROI, nb paris, mises)\n"
     "/bilan JJ/MM/AAAA — bilan d'une date precise\n"
     "/bilan cumule — bilan depuis le debut\n"
-    "/confiance — estimation combinee backtest+direct, par modele\n"
-    "/clv — Closing Line Value moyen par modele (edge vs marche)\n"
+    "/confiance — estimation combinee backtest+direct, par modele (detail complet)\n"
+    "/clv — Closing Line Value moyen par modele (detail complet)\n"
     "/pause [strategie|tout] — coupe les notifications (le pari continue en arriere-plan)\n"
     "/reprendre [strategie|tout] — reactive les notifications\n"
     "/courses_restantes — courses de trot pas encore parties aujourd'hui\n"
@@ -252,7 +255,82 @@ def traiter_confiance():
     return msg
 
 
-def traiter_clv():
+def traiter_statut():
+    chemin_log = f"{RACINE}/paris_virtuels.csv"
+    lignes_csv = []
+    if os.path.exists(chemin_log):
+        with open(chemin_log, "r", encoding="utf-8") as f:
+            lignes_csv = list(csv.DictReader(f))
+
+    msg = "🚦 <b>Statut par strategie</b> (IC95% + CLV)\n\n"
+    msg += "<i>🟢 backtest confirme | 🔴 backtest hors IC95% | ⚪ echantillon insuffisant (&lt;50 paris)</i>\n\n"
+
+    for cle in MODELES:
+        nom = NOMS_AFFICHAGE[cle]
+        ref = REFERENCE_BACKTEST[cle]
+        nom_log = cle_log_modele(cle)
+        stats_direct = calculer_stats_modele(lignes_csv, nom_log)
+
+        n_bt, roi_bt = ref["n"], ref["roi"]
+        n_direct = stats_direct["nb"] if stats_direct else 0
+
+        if n_direct < SEUIL_MIN_PARIS_STATUT:
+            msg += f"⚪ <b>{nom}</b> (n={n_direct})\nEchantillon trop petit pour conclure (seuil : {SEUIL_MIN_PARIS_STATUT})\n\n"
+            continue
+
+        roi_direct = stats_direct["roi"]
+        roi_combine = (n_bt * roi_bt + n_direct * roi_direct) / (n_bt + n_direct)
+
+        sous = [l for l in lignes_csv if l.get("modele") == nom_log and l.get("resultat", "") != ""]
+        returns = []
+        for l in sous:
+            mise = float(l.get("mise", 0) or 0)
+            gain = float(l.get("gain_euros", 0) or 0)
+            if mise > 0:
+                returns.append(gain / mise)
+
+        dans_ic = None
+        ic_texte = ""
+        if len(returns) > 1:
+            ecart_type = statistics.stdev(returns)
+            erreur_type = ecart_type / ((n_bt + n_direct) ** 0.5)
+            ic_bas = roi_combine - 1.96 * erreur_type
+            ic_haut = roi_combine + 1.96 * erreur_type
+            dans_ic = ic_bas <= roi_bt <= ic_haut
+            ic_texte = f"[{ic_bas:+.1%},{ic_haut:+.1%}]"
+
+        clv_texte = "non disponible"
+        if cle in MODELES_AVEC_CLV:
+            sous_clv = [
+                l for l in lignes_csv
+                if l.get("modele") == nom_log and l.get("resultat", "") != ""
+                and l.get("cote_cloture", "") not in ("", None)
+            ]
+            clv_valeurs = []
+            for l in sous_clv:
+                try:
+                    cd, cc = float(l["cote"]), float(l["cote_cloture"])
+                    if cc > 0:
+                        clv_valeurs.append((cd / cc) - 1)
+                except (ValueError, ZeroDivisionError):
+                    continue
+            if clv_valeurs:
+                clv_moyen = sum(clv_valeurs) / len(clv_valeurs)
+                clv_texte = f"{clv_moyen:+.1%} (n={len(clv_valeurs)})"
+
+        emoji = "🟢" if (dans_ic is None or dans_ic) else "🔴"
+        statut_ic = "backtest dans l'IC95%" if dans_ic else ("backtest HORS IC95%" if dans_ic is False else "IC non calculable")
+
+        msg += (
+            f"{emoji} <b>{nom}</b> (n={n_direct})\n"
+            f"{statut_ic} : {roi_bt:+.1%} {ic_texte}\n"
+            f"CLV : {clv_texte}\n\n"
+        )
+
+    return msg
+
+
+
     chemin_log = f"{RACINE}/paris_virtuels.csv"
     if not os.path.exists(chemin_log):
         return "Aucun pari enregistre pour l'instant."
@@ -393,7 +471,9 @@ def main():
         commande = parties[0].lower()
         argument = parties[1].strip().lower() if len(parties) > 1 else ""
 
-        if commande == "/bankroll":
+        if commande == "/statut":
+            envoyer_telegram(traiter_statut())
+        elif commande == "/bankroll":
             envoyer_telegram(traiter_bankroll())
         elif commande == "/bilan":
             envoyer_telegram(traiter_bilan(argument))
