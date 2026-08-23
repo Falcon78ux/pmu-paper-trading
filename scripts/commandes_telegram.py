@@ -69,10 +69,13 @@ REFERENCE_BACKTEST = {
 }
 
 SEUIL_MIN_PARIS_STATUT = 50
+SEUIL_MIN_PARIS_SORTIE_BRUIT = 300
+SEUIL_LARGEUR_IC_SORTIE_BRUIT = 0.15  # 15 points de pourcentage
 
 TEXTE_AIDE = (
     "<b>Commandes disponibles</b>\n\n"
     "/statut — indicateur combine par strategie (IC95% + CLV, emoji vert/rouge/neutre)\n"
+    "/progression — suivi de la sortie du bruit statistique (direct seul, sans backtest) et temps restant estime\n"
     "/bankroll — bankrolls actuelles des 16 strategies\n"
     "/bilan — bilan du jour (gain, perte, ROI, nb paris, mises)\n"
     "/bilan JJ/MM/AAAA — bilan d'une date precise\n"
@@ -330,7 +333,92 @@ def traiter_statut():
     return msg
 
 
+def traiter_progression():
+    chemin_log = f"{RACINE}/paris_virtuels.csv"
+    lignes_csv = []
+    if os.path.exists(chemin_log):
+        with open(chemin_log, "r", encoding="utf-8") as f:
+            lignes_csv = list(csv.DictReader(f))
 
+    maintenant = datetime.now(timezone.utc)
+
+    msg = "🎯 <b>Progression vers la sortie du bruit</b>\n\n"
+    msg += (
+        f"<i>Criteres : n≥{SEUIL_MIN_PARIS_SORTIE_BRUIT} paris ET intervalle "
+        f"de confiance direct-seul (independant du backtest) ≤{SEUIL_LARGEUR_IC_SORTIE_BRUIT:.0%} "
+        f"de largeur. Estimation basee sur le rythme reel observe depuis le premier pari de chaque strategie.</i>\n\n"
+    )
+
+    for cle in MODELES:
+        nom = NOMS_AFFICHAGE[cle]
+        nom_log = cle_log_modele(cle)
+        sous = [l for l in lignes_csv if l.get("modele") == nom_log and l.get("resultat", "") != ""]
+        n = len(sous)
+
+        if n == 0:
+            msg += f"⚪ <b>{nom}</b>\nAucun pari resolu pour l'instant.\n\n"
+            continue
+
+        returns = []
+        for l in sous:
+            mise = float(l.get("mise", 0) or 0)
+            gain = float(l.get("gain_euros", 0) or 0)
+            if mise > 0:
+                returns.append(gain / mise)
+
+        roi_direct = sum(returns) / len(returns) if returns else 0
+
+        largeur_ic = None
+        if len(returns) > 1:
+            ecart_type = statistics.stdev(returns)
+            erreur_type = ecart_type / (n ** 0.5)
+            largeur_ic = 2 * 1.96 * erreur_type
+
+        dates_races = []
+        for l in sous:
+            rid = l.get("race_id", "")
+            if len(rid) >= 8:
+                try:
+                    dates_races.append(datetime.strptime(rid[:8], "%d%m%Y").replace(tzinfo=timezone.utc))
+                except ValueError:
+                    continue
+
+        if dates_races:
+            premiere_date = min(dates_races)
+            jours_ecoules = max((maintenant - premiere_date).days, 1)
+            rythme = n / jours_ecoules
+        else:
+            rythme = 0
+
+        critere_n = n >= SEUIL_MIN_PARIS_SORTIE_BRUIT
+        critere_ic = largeur_ic is not None and largeur_ic <= SEUIL_LARGEUR_IC_SORTIE_BRUIT
+        pret = critere_n and critere_ic
+
+        if pret:
+            msg += f"✅ <b>{nom}</b> — SORTI DU BRUIT\n"
+            msg += f"n={n}, ROI direct={roi_direct:+.1%}, IC95%~±{largeur_ic/2:.1%}\n\n"
+            continue
+
+        ic_texte = f"±{largeur_ic/2:.1%}" if largeur_ic is not None else "n/a"
+        msg += f"⏳ <b>{nom}</b>\n"
+        msg += f"n={n}/{SEUIL_MIN_PARIS_SORTIE_BRUIT}, ROI direct={roi_direct:+.1%}, IC95%~{ic_texte}\n"
+
+        if not critere_n:
+            if rythme > 0:
+                jours_restants_n = max(0, (SEUIL_MIN_PARIS_SORTIE_BRUIT - n) / rythme)
+                msg += f"Rythme actuel : {rythme:.1f} paris/jour → ~{jours_restants_n:.0f} jours avant n={SEUIL_MIN_PARIS_SORTIE_BRUIT}\n"
+            else:
+                msg += "Rythme insuffisant pour estimer un delai.\n"
+
+        if not critere_ic and largeur_ic is not None:
+            msg += f"IC encore trop large ({largeur_ic:.1%} de largeur, cible ≤{SEUIL_LARGEUR_IC_SORTIE_BRUIT:.0%}) - se resserrera avec plus de paris.\n"
+
+        msg += "\n"
+
+    return msg
+
+
+def traiter_clv():
     chemin_log = f"{RACINE}/paris_virtuels.csv"
     if not os.path.exists(chemin_log):
         return "Aucun pari enregistre pour l'instant."
@@ -473,6 +561,8 @@ def main():
 
         if commande == "/statut":
             envoyer_telegram(traiter_statut())
+        elif commande == "/progression":
+            envoyer_telegram(traiter_progression())
         elif commande == "/bankroll":
             envoyer_telegram(traiter_bankroll())
         elif commande == "/bilan":
