@@ -2,7 +2,7 @@ name: Suivi PMU automatique
 
 on:
   schedule:
-    - cron: "7,22,37,52 * * * *"
+    - cron: "7,22,37,52 6-23 * * *"
   workflow_dispatch: {}
 
 jobs:
