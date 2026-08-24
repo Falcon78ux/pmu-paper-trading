@@ -70,7 +70,7 @@ REFERENCE_BACKTEST = {
 
 SEUIL_MIN_PARIS_STATUT = 50
 SEUIL_MIN_PARIS_SORTIE_BRUIT = 300
-SEUIL_LARGEUR_IC_SORTIE_BRUIT = 0.15  # 15 points de pourcentage
+SEUIL_LARGEUR_IC_SORTIE_BRUIT = 0.40  # CORRIGE (23 aout) : 15% etait base sur une approximation binomiale erronee (supposait un ecart-type ~0.4-0.5 comme un gagne/perdu simple). La vraie variance des RETOURS financiers (qui integrent l'ampleur des gains selon la cote) mesuree sur v1.10/v1.10-Favori/Couple-Harville est bien plus elevee (ecart-type 2 a 6 selon la strategie) - un seuil de 15% aurait necessite jusqu'a 22911 paris (plus de 3 ans a notre rythme) pour Couple-Harville. 40% reste atteignable en quelques semaines a quelques mois selon la strategie, tout en representant un vrai resserrement par rapport au chaos initial.
 
 TEXTE_AIDE = (
     "<b>Commandes disponibles</b>\n\n"
@@ -368,6 +368,34 @@ def traiter_progression():
 
         roi_direct = sum(returns) / len(returns) if returns else 0
 
+        # --- NOUVEAU (23 aout) : detection de derive recente (IC glissant sur les 100 derniers paris) ---
+        alerte_derive = ""
+        if len(returns) >= 100:
+            sous_avec_date = [l for l in sous if l.get("race_id")]
+            sous_tries = sorted(sous_avec_date, key=lambda l: l.get("race_id", ""))
+            returns_tries = []
+            for l in sous_tries:
+                mise = float(l.get("mise", 0) or 0)
+                gain = float(l.get("gain_euros", 0) or 0)
+                if mise > 0:
+                    returns_tries.append(gain / mise)
+            recents_100 = returns_tries[-100:]
+            if len(recents_100) == 100:
+                roi_recent = sum(recents_100) / 100
+                ecart_type_recent = statistics.stdev(recents_100)
+                erreur_type_recent = ecart_type_recent / (100 ** 0.5)
+                ic_bas_recent = roi_recent - 1.96 * erreur_type_recent
+                ic_haut_recent = roi_recent + 1.96 * erreur_type_recent
+                roi_long_terme = sum(returns) / len(returns)
+                if not (ic_bas_recent <= roi_long_terme <= ic_haut_recent):
+                    alerte_derive = (
+                        f"⚠️ Derive recente possible : les 100 derniers paris "
+                        f"donnent {roi_recent:+.1%} [{ic_bas_recent:+.1%},{ic_haut_recent:+.1%}], "
+                        f"hors de cet intervalle par rapport a la moyenne long terme ({roi_long_terme:+.1%}).\n"
+                    )
+                else:
+                    alerte_derive = f"✓ 100 derniers paris ({roi_recent:+.1%}) coherents avec la moyenne long terme.\n"
+
         largeur_ic = None
         if len(returns) > 1:
             ecart_type = statistics.stdev(returns)
@@ -396,12 +424,15 @@ def traiter_progression():
 
         if pret:
             msg += f"✅ <b>{nom}</b> — SORTI DU BRUIT\n"
-            msg += f"n={n}, ROI direct={roi_direct:+.1%}, IC95%~±{largeur_ic/2:.1%}\n\n"
+            msg += f"n={n}, ROI direct={roi_direct:+.1%}, IC95%~±{largeur_ic/2:.1%}\n"
+            msg += alerte_derive
+            msg += "\n"
             continue
 
         ic_texte = f"±{largeur_ic/2:.1%}" if largeur_ic is not None else "n/a"
         msg += f"⏳ <b>{nom}</b>\n"
         msg += f"n={n}/{SEUIL_MIN_PARIS_SORTIE_BRUIT}, ROI direct={roi_direct:+.1%}, IC95%~{ic_texte}\n"
+        msg += alerte_derive
 
         if not critere_n:
             if rythme > 0:
