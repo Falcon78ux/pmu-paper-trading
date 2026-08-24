@@ -24,6 +24,7 @@ from commun import (
     maj_driver, maj_hippodrome, maj_cheval, maj_cheval_corde,
     maj_dernier_rang, maj_sire_forme, charger_table_pedigree,
     get_bankroll, mettre_a_jour_bankroll, extraire_cote_directe,
+    maj_deferrage, extraire_deferre_4_pieds,
 )
 
 RACINE = os.path.join(os.path.dirname(__file__), "..")
@@ -170,6 +171,7 @@ def main():
     etat_chevaux_corde = charger_json(f"{RACINE}/etat_chevaux_corde.json", {})
     etat_dernier_rang = charger_json(f"{RACINE}/etat_dernier_rang.json", {})
     etat_sire_forme = charger_json(f"{RACINE}/etat_sire_forme.json", {})
+    etat_deferrage = charger_json(f"{RACINE}/etat_deferrage.json", {})
     etat_pause = charger_json(f"{RACINE}/etat_pause.json", {})
     table_pedigree = charger_table_pedigree(f"{RACINE}/pedigree_aplati.csv")
     constantes = charger_json(f"{RACINE}/constantes.json", {})
@@ -193,6 +195,7 @@ def main():
     bankroll_2favori, chemin_bankroll_2favori = get_bankroll(RACINE, "2favori")
     bankroll_couple_harville, chemin_bankroll_couple_harville = get_bankroll(RACINE, "couple_harville")
     bankroll_consensus_place, chemin_bankroll_consensus_place = get_bankroll(RACINE, "consensus_place")
+    bankroll_v110d4, chemin_bankroll_v110d4 = get_bankroll(RACINE, "v110d4")
 
     chemin_log = f"{RACINE}/paris_virtuels.csv"
     if not os.path.exists(chemin_log):
@@ -275,6 +278,8 @@ def main():
                 maj_driver(etat_drivers, driver, gagnant)
 
             maj_dernier_rang(etat_dernier_rang, p.get("nom"), rang)
+
+            maj_deferrage(etat_deferrage, p.get("nom"), extraire_deferre_4_pieds(p))
 
             pere = table_pedigree.get(p.get("nom"))
             if pere:
@@ -599,6 +604,10 @@ def main():
                 bankroll_v110favori += gain_euros
                 bankroll_apres = bankroll_v110favori
                 cle_pause = "v110favori"
+            elif l["modele"] == "v110d4":
+                bankroll_v110d4 += gain_euros
+                bankroll_apres = bankroll_v110d4
+                cle_pause = "v110d4"
             elif l["modele"] == "consensus_place":
                 bankroll_consensus_place += gain_euros
                 bankroll_apres = bankroll_consensus_place
@@ -666,6 +675,7 @@ def main():
     mettre_a_jour_bankroll(chemin_bankroll_2favori, bankroll_2favori)
     mettre_a_jour_bankroll(chemin_bankroll_couple_harville, bankroll_couple_harville)
     mettre_a_jour_bankroll(chemin_bankroll_consensus_place, bankroll_consensus_place)
+    mettre_a_jour_bankroll(chemin_bankroll_v110d4, bankroll_v110d4)
 
     sauvegarder_json(f"{RACINE}/etat_drivers.json", etat_drivers)
     sauvegarder_json(f"{RACINE}/etat_hippodromes.json", etat_hippodromes)
@@ -673,6 +683,7 @@ def main():
     sauvegarder_json(f"{RACINE}/etat_chevaux_corde.json", etat_chevaux_corde)
     sauvegarder_json(f"{RACINE}/etat_dernier_rang.json", etat_dernier_rang)
     sauvegarder_json(f"{RACINE}/etat_sire_forme.json", etat_sire_forme)
+    sauvegarder_json(f"{RACINE}/etat_deferrage.json", etat_deferrage)
 
     print(f"{len(courses_traitees_ce_run)} courses traitees dans ce run.")
 
