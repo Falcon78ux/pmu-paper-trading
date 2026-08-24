@@ -37,6 +37,7 @@ from commun import (
     get_bankroll, calculer_mise, calculer_mise_v18, calculer_mise_v110,
     calculer_mise_place, calculer_mise_2favori, calculer_mise_v14sire,
     arrondir_mise_euro, MISE_MINIMUM,
+    get_deferre_precedent, detecter_changement_vers_d4,
 )
 
 RACINE = os.path.join(os.path.dirname(__file__), "..")
@@ -114,6 +115,7 @@ def main():
     etat_chevaux_corde = charger_json(f"{RACINE}/etat_chevaux_corde.json", {})
     etat_dernier_rang = charger_json(f"{RACINE}/etat_dernier_rang.json", {})
     etat_sire_forme = charger_json(f"{RACINE}/etat_sire_forme.json", {})
+    etat_deferrage = charger_json(f"{RACINE}/etat_deferrage.json", {})
     etat_pause = charger_json(f"{RACINE}/etat_pause.json", {})
     table_pedigree = charger_table_pedigree(f"{RACINE}/pedigree_aplati.csv")
     modele_v14 = charger_json(f"{RACINE}/modele_v14.json")
@@ -141,6 +143,7 @@ def main():
     bankroll_2favori, chemin_bankroll_2favori = get_bankroll(RACINE, "2favori")
     bankroll_couple_harville, chemin_bankroll_couple_harville = get_bankroll(RACINE, "couple_harville")
     bankroll_consensus_place, chemin_bankroll_consensus_place = get_bankroll(RACINE, "consensus_place")
+    bankroll_v110d4, chemin_bankroll_v110d4 = get_bankroll(RACINE, "v110d4")
 
     try:
         courses = recuperer_programme_du_jour(date_str)
@@ -185,6 +188,7 @@ def main():
         value_bets_v15 = []
         value_bets_v18 = []
         value_bets_v110 = []
+        value_bets_v110d4 = []
         candidats_place = []
         toutes_probas_v110 = []
 
@@ -308,6 +312,12 @@ def main():
                         mise110 = calculer_mise_v110(proba110, cote, bankroll_v110, deferre_4_pieds)
                         if mise110 > 0:
                             value_bets_v110.append((cheval, cote, proba110, ev110, mise110, deferre_4_pieds))
+
+                        historique_deferrage = get_deferre_precedent(etat_deferrage, cheval)
+                        if detecter_changement_vers_d4(historique_deferrage, deferre_4_pieds):
+                            mise110d4 = calculer_mise_v110(proba110, cote, bankroll_v110d4, deferre_4_pieds)
+                            if mise110d4 > 0:
+                                value_bets_v110d4.append((cheval, cote, proba110, ev110, mise110d4))
 
                 proba_place, contrib_place = calculer_proba_v110_ou_place_avec_contributions(valeurs_communes, modele_place)
                 if proba_place is not None:
@@ -527,6 +537,11 @@ def main():
             for cheval, cote, proba, ev, mise, d4 in value_bets_v110favori:
                 bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
+        if value_bets_v110d4 and not etat_pause.get("v110d4", False):
+            bloc = f"<b>Modele v1.10-D4</b> (bankroll : {bankroll_v110d4:.0f}EUR, changement vers deferre 4 pieds) :\n"
+            for cheval, cote, proba, ev, mise in value_bets_v110d4:
+                bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
+            sections_msg.append(bloc)
         if consensus_place_pick and not etat_pause.get("consensus_place", False):
             cheval, cote, proba, ev, mise = consensus_place_pick
             bloc = f"<b>Modele CONSENSUS-PLACE</b> (bankroll : {bankroll_consensus_place:.0f}EUR) :\n"
@@ -588,6 +603,8 @@ def main():
             log_paris.append({"race_id": race_id, "modele": "v110dutch", "cheval": d["cheval_favori"], "cote": d["cote_favori"], "cote_cloture": "", "ev": "", "mise": d["mise_favori"], "date_detection": maintenant.isoformat()})
         for cheval, cote, proba, ev, mise, d4 in value_bets_v110favori:
             log_paris.append({"race_id": race_id, "modele": "v110favori", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+        for cheval, cote, proba, ev, mise in value_bets_v110d4:
+            log_paris.append({"race_id": race_id, "modele": "v110d4", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
         if consensus_place_pick:
             cheval, cote, proba, ev, mise = consensus_place_pick
             log_paris.append({"race_id": race_id, "modele": "consensus_place", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
