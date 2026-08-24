@@ -27,7 +27,7 @@ RACINE = os.path.join(os.path.dirname(__file__), "..")
 MODELES = [
     "v14", "v14dutch", "v14favori", "v14sire",
     "v15", "v18",
-    "v110", "v110dutch", "v110favori",
+    "v110", "v110dutch", "v110favori", "v110d4",
     "consensus_place", "couple_harville",
     "place", "2sur4", "trio", "multi", "2favori",
 ]
@@ -36,6 +36,7 @@ NOMS_AFFICHAGE = {
     "v14sire": "v1.4+Genealogie",
     "v15": "v1.5", "v18": "v1.8",
     "v110": "v1.10", "v110dutch": "v1.10-Dutch", "v110favori": "v1.10-Favori",
+    "v110d4": "v1.10-D4",
     "consensus_place": "Consensus-Place", "couple_harville": "Couple-Harville",
     "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
     "2favori": "2favori",
@@ -44,7 +45,7 @@ NOMS_AFFICHAGE = {
 MODELES_AVEC_CLV = [
     "v14", "v14dutch", "v14favori", "v14sire",
     "v15", "v18",
-    "v110", "v110dutch", "v110favori",
+    "v110", "v110dutch", "v110favori", "v110d4",
     "consensus_place",
     "2favori",
 ]
@@ -59,6 +60,7 @@ REFERENCE_BACKTEST = {
     "v110": {"n": 34379, "roi": 0.1879},
     "v110dutch": {"n": 14873, "roi": 0.2319},
     "v110favori": {"n": 7590, "roi": 0.3584},
+    "v110d4": {"n": 3718, "roi": 0.5183},
     "consensus_place": {"n": 7811, "roi": 0.3738},
     "couple_harville": {"n": 15980, "roi": 0.6757},
     "place": {"n": 16635, "roi": 0.233},
@@ -155,7 +157,7 @@ def cle_log_modele(cle):
     consensus_place et couple_harville sont stockes tels quels dans
     les logs (pas les noms d'affichage), les autres utilisent le nom
     d'affichage."""
-    if cle in ("v14dutch", "v14favori", "v14sire", "v110dutch", "v110favori", "consensus_place", "couple_harville"):
+    if cle in ("v14dutch", "v14favori", "v14sire", "v110dutch", "v110favori", "v110d4", "consensus_place", "couple_harville"):
         return cle
     return NOMS_AFFICHAGE[cle]
 
@@ -346,7 +348,9 @@ def traiter_progression():
     msg += (
         f"<i>Criteres : n≥{SEUIL_MIN_PARIS_SORTIE_BRUIT} paris ET intervalle "
         f"de confiance direct-seul (independant du backtest) ≤{SEUIL_LARGEUR_IC_SORTIE_BRUIT:.0%} "
-        f"de largeur. Estimation basee sur le rythme reel observe depuis le premier pari de chaque strategie.</i>\n\n"
+        f"de largeur. Estimation basee sur le rythme reel observe depuis le premier pari de chaque strategie. "
+        f"A partir de 100 paris, alerte de derive si les 100 derniers divergent de la moyenne long terme "
+        f"(detection de changement de regime).</i>\n\n"
     )
 
     for cle in MODELES:
