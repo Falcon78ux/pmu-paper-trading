@@ -6,7 +6,17 @@ S'execute a chaque cycle (comme tous les scripts), mais n'enregistre un
 nouvel instantane qu'UNE FOIS PAR SEMAINE (meme principe que le heartbeat
 quotidien de keep_alive.py). Ecrit dans suivi_hebdomadaire.csv - permet
 de suivre l'evolution dans le temps de l'estimation combinee backtest+
-direct, plutot que des instantanes isoles.
+direct, plutot que des instantanes isoles. Sert de journal de reference
+pour un eventuel recalibrage periodique des modeles.
+
+CORRIGE (24 aout) : etendu de 9 a 17 strategies (couvre desormais toutes
+les strategies actuellement en production, y compris les decouvertes
+recentes - dutching, Couple-Harville, Consensus-Place, v1.10-D4, etc.).
+Corrige aussi un bug latent : plusieurs modeles sont enregistres sous
+leur NOM DE CODE dans paris_virtuels.csv (ex. "v14dutch"), pas leur nom
+d'affichage ("v1.4-Dutch") - la fonction cle_log_modele() fait
+desormais la correspondance correcte, identique a celle deja utilisee
+dans commandes_telegram.py.
 =============================================================================
 """
 
@@ -21,18 +31,37 @@ from commun import charger_json, sauvegarder_json, envoyer_telegram
 
 RACINE = os.path.join(os.path.dirname(__file__), "..")
 
-MODELES = ["v14", "v15", "v18", "v110", "place", "2sur4", "trio", "multi", "2favori"]
+MODELES = [
+    "v14", "v14dutch", "v14favori", "v14sire",
+    "v15", "v18",
+    "v110", "v110dutch", "v110favori", "v110d4",
+    "consensus_place", "couple_harville",
+    "place", "2sur4", "trio", "multi", "2favori",
+]
 NOMS_AFFICHAGE = {
-    "v14": "v1.4", "v15": "v1.5", "v18": "v1.8", "v110": "v1.10",
+    "v14": "v1.4", "v14dutch": "v1.4-Dutch", "v14favori": "v1.4-Favori",
+    "v14sire": "v1.4+Genealogie",
+    "v15": "v1.5", "v18": "v1.8",
+    "v110": "v1.10", "v110dutch": "v1.10-Dutch", "v110favori": "v1.10-Favori",
+    "v110d4": "v1.10-D4",
+    "consensus_place": "Consensus-Place", "couple_harville": "Couple-Harville",
     "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
     "2favori": "2favori",
 }
 
 REFERENCE_BACKTEST = {
     "v14": {"n": 30984, "roi": 0.1075},
+    "v14dutch": {"n": 7386, "roi": 0.30},
+    "v14favori": {"n": 8654, "roi": 0.2789},
+    "v14sire": {"n": 30042, "roi": 0.1176},
     "v15": {"n": 31756, "roi": 0.1391},
     "v18": {"n": 34248, "roi": 0.1556},
     "v110": {"n": 34379, "roi": 0.1879},
+    "v110dutch": {"n": 14873, "roi": 0.2319},
+    "v110favori": {"n": 7590, "roi": 0.3584},
+    "v110d4": {"n": 3718, "roi": 0.5183},
+    "consensus_place": {"n": 7811, "roi": 0.3738},
+    "couple_harville": {"n": 15980, "roi": 0.6757},
     "place": {"n": 16635, "roi": 0.233},
     "2sur4": {"n": 10312, "roi": 0.838},
     "trio": {"n": 14993, "roi": 1.358},
@@ -47,8 +76,19 @@ CHAMPS_CSV = [
 ]
 
 
-def calculer_stats_modele(lignes_csv, nom_modele):
-    sous = [l for l in lignes_csv if l.get("modele") == nom_modele and l.get("resultat", "") != ""]
+def cle_log_modele(cle):
+    """v14dutch, v14favori, v14sire, v110dutch, v110favori, v110d4,
+    consensus_place et couple_harville sont stockes sous leur nom de
+    code dans paris_virtuels.csv (pas leur nom d'affichage) - meme
+    logique que commandes_telegram.py, indispensable pour retrouver
+    correctement leurs paris."""
+    if cle in ("v14dutch", "v14favori", "v14sire", "v110dutch", "v110favori", "v110d4", "consensus_place", "couple_harville"):
+        return cle
+    return NOMS_AFFICHAGE[cle]
+
+
+def calculer_stats_modele(lignes_csv, nom_log):
+    sous = [l for l in lignes_csv if l.get("modele") == nom_log and l.get("resultat", "") != ""]
     if not sous:
         return None
     nb = len(sous)
@@ -72,16 +112,17 @@ def enregistrer_snapshot():
     lignes_a_ecrire = []
     for cle in MODELES:
         nom = NOMS_AFFICHAGE[cle]
+        nom_log = cle_log_modele(cle)
         ref = REFERENCE_BACKTEST[cle]
         n_bt, roi_bt = ref["n"], ref["roi"]
-        stats_direct = calculer_stats_modele(lignes_csv, nom)
+        stats_direct = calculer_stats_modele(lignes_csv, nom_log)
 
         if stats_direct:
             n_direct, roi_direct = stats_direct["nb"], stats_direct["roi"]
             roi_combine = (n_bt * roi_bt + n_direct * roi_direct) / (n_bt + n_direct)
             poids_direct = n_direct / (n_bt + n_direct)
 
-            sous = [l for l in lignes_csv if l.get("modele") == nom and l.get("resultat", "") != ""]
+            sous = [l for l in lignes_csv if l.get("modele") == nom_log and l.get("resultat", "") != ""]
             returns = [
                 float(l.get("gain_euros", 0) or 0) / float(l.get("mise", 0) or 1)
                 for l in sous if float(l.get("mise", 0) or 0) > 0
