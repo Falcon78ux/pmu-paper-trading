@@ -51,7 +51,7 @@ NOMS_AFFICHAGE = {
 
 REFERENCE_BACKTEST = {
     "v14": {"n": 30984, "roi": 0.1075},
-    "v14dutch": {"n": 7386, "roi": 0.30},
+    "v14dutch": {"n": 7178, "roi": 0.1124},  # CORRIGE (25 aout), coherent avec commandes_telegram.py
     "v14favori": {"n": 8654, "roi": 0.2789},
     "v14sire": {"n": 30042, "roi": 0.1176},
     "v15": {"n": 31756, "roi": 0.1391},
@@ -62,11 +62,11 @@ REFERENCE_BACKTEST = {
     "v110d4": {"n": 3718, "roi": 0.5183},
     "consensus_place": {"n": 7811, "roi": 0.3738},
     "couple_harville": {"n": 15980, "roi": 0.6757},
-    "place": {"n": 16635, "roi": 0.233},
+    "place": {"n": 16635, "roi": 0.2339},  # CORRIGE (25 aout), coherent avec commandes_telegram.py
     "2sur4": {"n": 10312, "roi": 0.838},
-    "trio": {"n": 14993, "roi": 1.358},
-    "multi": {"n": 10206, "roi": 4.60},
-    "2favori": {"n": 2645, "roi": 0.2501},
+    "trio": {"n": 14993, "roi": 1.3745},  # CORRIGE (25 aout), coherent avec commandes_telegram.py
+    "multi": {"n": 6366, "roi": 1.9111},  # CORRIGE (25 aout), coherent avec commandes_telegram.py
+    "2favori": {"n": 3171, "roi": 0.3514},  # CORRIGE (25 aout), coherent avec commandes_telegram.py
 }
 
 CHAMPS_CSV = [
