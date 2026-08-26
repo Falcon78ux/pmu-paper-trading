@@ -335,12 +335,34 @@ def traiter_statut():
     return msg
 
 
+def trouver_point_sortie_bruit(sous_tries, returns_tries):
+    """Parcourt chronologiquement les paris deja tries et retrouve
+    l'index exact ou n>=SEUIL_MIN_PARIS_SORTIE_BRUIT ET la largeur d'IC
+    passe sous SEUIL_LARGEUR_IC_SORTIE_BRUIT pour la premiere fois.
+    Retourne le date_detection du pari a cet index (le point de
+    bascule), ou None si jamais atteint."""
+    n_total = len(returns_tries)
+    if n_total < SEUIL_MIN_PARIS_SORTIE_BRUIT:
+        return None
+    for i in range(SEUIL_MIN_PARIS_SORTIE_BRUIT, n_total + 1):
+        sous_returns = returns_tries[:i]
+        if len(sous_returns) > 1:
+            ecart_type = statistics.stdev(sous_returns)
+            largeur = 2 * 1.96 * ecart_type / (i ** 0.5)
+            if largeur <= SEUIL_LARGEUR_IC_SORTIE_BRUIT:
+                return sous_tries[i - 1].get("date_detection", "")
+    return None
+
+
 def traiter_progression():
     chemin_log = f"{RACINE}/paris_virtuels.csv"
     lignes_csv = []
     if os.path.exists(chemin_log):
         with open(chemin_log, "r", encoding="utf-8") as f:
             lignes_csv = list(csv.DictReader(f))
+
+    dates_sortie_bruit = charger_json(f"{RACINE}/dates_sortie_bruit.json", {})
+    fichier_modifie = False
 
     maintenant = datetime.now(timezone.utc)
 
@@ -350,7 +372,9 @@ def traiter_progression():
         f"de confiance direct-seul (independant du backtest) ≤{SEUIL_LARGEUR_IC_SORTIE_BRUIT:.0%} "
         f"de largeur. Estimation basee sur le rythme reel observe depuis le premier pari de chaque strategie. "
         f"A partir de 100 paris, alerte de derive si les 100 derniers divergent de la moyenne long terme "
-        f"(detection de changement de regime).</i>\n\n"
+        f"(detection de changement de regime). Une fois sortie du bruit confirmee, un compteur separe "
+        f"suit les resultats UNIQUEMENT depuis ce point precis (le pari technique continue en continu "
+        f"pendant toute la periode, seul l'affichage separe l'avant/apres).</i>\n\n"
     )
 
     for cle in MODELES:
@@ -399,6 +423,14 @@ def traiter_progression():
                     )
                 else:
                     alerte_derive = f"✓ 100 derniers paris ({roi_recent:+.1%}) coherents avec la moyenne long terme.\n"
+        else:
+            sous_tries = sorted([l for l in sous if l.get("race_id")], key=lambda l: l.get("race_id", ""))
+            returns_tries = []
+            for l in sous_tries:
+                mise = float(l.get("mise", 0) or 0)
+                gain = float(l.get("gain_euros", 0) or 0)
+                if mise > 0:
+                    returns_tries.append(gain / mise)
 
         largeur_ic = None
         if len(returns) > 1:
@@ -428,8 +460,32 @@ def traiter_progression():
 
         if pret:
             msg += f"✅ <b>{nom}</b> — SORTI DU BRUIT\n"
-            msg += f"n={n}, ROI direct={roi_direct:+.1%}, IC95%~±{largeur_ic/2:.1%}\n"
+            msg += f"n={n}, ROI direct (total)={roi_direct:+.1%}, IC95%~±{largeur_ic/2:.1%}\n"
             msg += alerte_derive
+
+            # --- NOUVEAU (26 aout) : compteur separe depuis la sortie du bruit ---
+            if cle not in dates_sortie_bruit:
+                point_sortie = trouver_point_sortie_bruit(sous_tries, returns_tries)
+                if point_sortie:
+                    dates_sortie_bruit[cle] = point_sortie
+                    fichier_modifie = True
+
+            date_sortie_str = dates_sortie_bruit.get(cle)
+            if date_sortie_str:
+                sous_post = [l for l in sous if l.get("date_detection", "") > date_sortie_str]
+                if sous_post:
+                    n_post = len(sous_post)
+                    returns_post = []
+                    for l in sous_post:
+                        mise = float(l.get("mise", 0) or 0)
+                        gain = float(l.get("gain_euros", 0) or 0)
+                        if mise > 0:
+                            returns_post.append(gain / mise)
+                    roi_post = sum(returns_post) / len(returns_post) if returns_post else 0
+                    msg += f"📍 <b>Depuis la sortie du bruit</b> : n={n_post}, ROI={roi_post:+.1%}\n"
+                else:
+                    msg += f"📍 <b>Depuis la sortie du bruit</b> : n=0 (aucun nouveau pari resolu depuis)\n"
+
             msg += "\n"
             continue
 
@@ -449,6 +505,9 @@ def traiter_progression():
             msg += f"IC encore trop large ({largeur_ic:.1%} de largeur, cible ≤{SEUIL_LARGEUR_IC_SORTIE_BRUIT:.0%}) - se resserrera avec plus de paris.\n"
 
         msg += "\n"
+
+    if fichier_modifie:
+        sauvegarder_json(f"{RACINE}/dates_sortie_bruit.json", dates_sortie_bruit)
 
     return msg
 
