@@ -64,7 +64,7 @@ REFERENCE_BACKTEST = {
     "couple_harville": {"n": 15980, "roi": 0.6757},
     "place": {"n": 16635, "roi": 0.2339},  # CORRIGE (25 aout), coherent avec commandes_telegram.py
     "2sur4": {"n": 10312, "roi": 0.838},
-    "trio": {"n": 14993, "roi": 1.3745},  # CORRIGE (25 aout), coherent avec commandes_telegram.py
+    "trio": {"n": 14993, "roi": 1.6530},  # CORRIGE (26 aout), coherent avec commandes_telegram.py
     "multi": {"n": 6366, "roi": 1.9111},  # CORRIGE (25 aout), coherent avec commandes_telegram.py
     "2favori": {"n": 3171, "roi": 0.3514},  # CORRIGE (25 aout), coherent avec commandes_telegram.py
 }
