@@ -61,7 +61,7 @@ REFERENCE_BACKTEST = {
     "v110favori": {"n": 7590, "roi": 0.3584},
     "v110d4": {"n": 3718, "roi": 0.5183},
     "consensus_place": {"n": 7811, "roi": 0.3738},
-    "couple_harville": {"n": 15980, "roi": 0.6757},
+    "couple_harville": {"n": 16159, "roi": 0.7088},  # CORRIGE (26 aout), coherent avec commandes_telegram.py
     "place": {"n": 16635, "roi": 0.2339},  # CORRIGE (25 aout), coherent avec commandes_telegram.py
     "2sur4": {"n": 10312, "roi": 0.838},
     "trio": {"n": 14993, "roi": 1.6530},  # CORRIGE (26 aout), coherent avec commandes_telegram.py
