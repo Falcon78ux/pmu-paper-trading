@@ -93,6 +93,13 @@ def extraire_cote_deux_sur_quatre(data):
 
 
 def extraire_trio(data):
+    """CORRIGE (26 aout) : le Trio peut se "degrader" en un pari a 2
+    chevaux (combinaison de 2 numeros au lieu de 3, libelle "Trio
+    degrade X rangs") quand trop peu de chevaux terminent
+    valablement la course. Retourne desormais un 4e element
+    (est_degrade) pour permettre au code appelant d'utiliser une
+    correspondance de SOUS-ENSEMBLE (2 des 3 chevaux paries presents
+    dans la paire degradee) plutot qu'une egalite stricte a 3."""
     for pari in data:
         if pari.get("typePari") != "TRIO":
             continue
@@ -102,15 +109,16 @@ def extraire_trio(data):
             continue
         combinaison = rapports[0].get("combinaison", "")
         if "NP" in str(combinaison):
-            return None, None, combinaison
+            return None, None, combinaison, False
         try:
             ensemble = frozenset(int(x) for x in str(combinaison).split("-"))
         except Exception:
-            return None, None, combinaison
+            return None, None, combinaison, False
         dividende = rapports[0].get("dividendePourUneMiseDeBase")
         if dividende is not None:
-            return ensemble, dividende / mise_base, combinaison
-    return None, None, None
+            est_degrade = len(ensemble) < 3
+            return ensemble, dividende / mise_base, combinaison, est_degrade
+    return None, None, None, False
 
 
 def extraire_cote_multi(data, type_pari):
@@ -140,24 +148,29 @@ def extraire_cote_multi(data, type_pari):
 
 
 def extraire_couple_gagnant(data):
+    """CORRIGE (26 aout) : le Couple Gagnant peut avoir PLUSIEURS
+    combinaisons gagnantes simultanees (cas d'egalite/dead-heat au
+    poteau) - l'ancien code ne regardait que la premiere trouvee et
+    aurait rate un pari gagnant correspondant a une 2e combinaison.
+    Retourne desormais la LISTE de toutes les combinaisons gagnantes
+    avec leur dividende respectif."""
+    resultats = []
     for pari in data:
         type_pari = pari.get("typePari", "")
         if type_pari not in ("COUPLE_GAGNANT", "COUPLE_ORDRE"):
             continue
         mise_base = pari.get("miseBase", 200)
-        rapports = pari.get("rapports", [])
-        if not rapports:
-            continue
-        rap = rapports[0]
-        combinaison = rap.get("combinaison", "")
-        try:
-            ensemble = frozenset(int(x) for x in str(combinaison).split("-"))
-        except Exception:
-            return None, None, combinaison
-        dividende = rap.get("dividendePourUneMiseDeBase")
-        if dividende is not None:
-            return ensemble, dividende / mise_base, combinaison
-    return None, None, None
+        for rap in pari.get("rapports", []):
+            combinaison = rap.get("combinaison", "")
+            try:
+                ensemble = frozenset(int(x) for x in str(combinaison).split("-"))
+            except Exception:
+                continue
+            dividende = rap.get("dividendePourUneMiseDeBase")
+            if dividende is not None:
+                resultats.append((ensemble, dividende / mise_base, combinaison))
+        break  # un seul type trouve (GAGNANT ou ORDRE) suffit, ne pas melanger les deux nomenclatures
+    return resultats
 
 
 def resultat_disponible(participants):
@@ -321,13 +334,13 @@ def main():
                 course_combine_incomplete = True
 
         rapports_place, cote_2sur4 = None, None
-        trio_reel_ensemble, trio_reel_cote, trio_combinaison_brute = None, None, None
-        couple_reel_ensemble, couple_reel_cote, couple_combinaison_brute = None, None, None
+        trio_reel_ensemble, trio_reel_cote, trio_combinaison_brute, trio_est_degrade = None, None, None, False
+        couple_reel_liste = []
         if rapports_data is not None:
             rapports_place = extraire_rapports_place(rapports_data)
             cote_2sur4 = extraire_cote_deux_sur_quatre(rapports_data)
-            trio_reel_ensemble, trio_reel_cote, trio_combinaison_brute = extraire_trio(rapports_data)
-            couple_reel_ensemble, couple_reel_cote, couple_combinaison_brute = extraire_couple_gagnant(rapports_data)
+            trio_reel_ensemble, trio_reel_cote, trio_combinaison_brute, trio_est_degrade = extraire_trio(rapports_data)
+            couple_reel_liste = extraire_couple_gagnant(rapports_data)
 
         top4_reel = frozenset(
             p.get("numPmu") for p in participants
@@ -349,19 +362,29 @@ def main():
                     continue
                 notre_pick = frozenset([num_pmu_1, num_pmu_2])
 
-                if couple_reel_ensemble is None:
+                if not couple_reel_liste:
                     ecrire_audit({
                         "race_id": race_id, "modele": "couple_harville",
                         "chevaux_paries": "|".join(chevaux_paries),
                         "rangs_arrivee_chevaux_paries": "",
-                        "top4_reel": top4_reel_str, "combinaison_rapport_brute": couple_combinaison_brute or "indisponible",
+                        "top4_reel": top4_reel_str, "combinaison_rapport_brute": "indisponible",
                         "cote_utilisee": "", "gain_calcule": "", "resultat": "NON_RESOLU_NP",
                         "coherence_verifiee": "IGNORE", "detail_incoherence": "Rapport COUPLE indisponible pour cette course",
                         "date_verif": datetime.now(timezone.utc).isoformat(),
                     })
                     continue
 
-                a_gagne = notre_pick == couple_reel_ensemble
+                # CORRIGE (26 aout) : cherche notre pick parmi TOUTES les
+                # combinaisons gagnantes possibles (cas d'egalite/dead-heat)
+                a_gagne = False
+                couple_reel_cote = None
+                couple_combinaison_brute = "|".join(c[2] for c in couple_reel_liste)
+                for ensemble_gagnant, cote_gagnante, _ in couple_reel_liste:
+                    if notre_pick == ensemble_gagnant:
+                        a_gagne = True
+                        couple_reel_cote = cote_gagnante
+                        break
+
                 mise = float(l.get("mise", 0) or 0)
                 gain_euros = mise * (couple_reel_cote - 1) if a_gagne else -mise
                 l["resultat"] = "GAGNANT" if a_gagne else "PERDANT"
@@ -445,7 +468,15 @@ def main():
                     ensemble_parie = frozenset(int(next(p.get("numPmu") for p in participants if p.get("nom") == c)) for c in chevaux_paries)
                 except Exception:
                     continue
-                a_gagne = ensemble_parie == trio_reel_ensemble
+
+                # CORRIGE (26 aout) : si le trio est degrade (rapport a 2
+                # chevaux au lieu de 3), on gagne si ces 2 chevaux sont
+                # tous les deux parmi nos 3 paries (sous-ensemble),
+                # pas une egalite stricte a 3
+                if trio_est_degrade:
+                    a_gagne = trio_reel_ensemble.issubset(ensemble_parie)
+                else:
+                    a_gagne = ensemble_parie == trio_reel_ensemble
 
                 if a_gagne and not trio_reel_cote:
                     continue
@@ -458,7 +489,7 @@ def main():
                 bankroll_trio += gain_euros
 
                 coherence, detail = "OK", ""
-                if a_gagne != a_gagne_independant:
+                if not trio_est_degrade and a_gagne != a_gagne_independant:
                     coherence = "INCOHERENT"
                     detail = f"Rapport dit {a_gagne}, verite terrain (rangs) dit {a_gagne_independant}"
 
@@ -466,7 +497,7 @@ def main():
                     "race_id": race_id, "modele": "trio",
                     "chevaux_paries": "|".join(chevaux_paries),
                     "rangs_arrivee_chevaux_paries": "|".join(str(r) for r in rangs),
-                    "top4_reel": top4_reel_str, "combinaison_rapport_brute": trio_combinaison_brute or "",
+                    "top4_reel": top4_reel_str, "combinaison_rapport_brute": (trio_combinaison_brute or "") + (" [DEGRADE]" if trio_est_degrade else ""),
                     "cote_utilisee": trio_reel_cote or "", "gain_calcule": f"{gain_euros:.2f}",
                     "resultat": l["resultat"], "coherence_verifiee": coherence,
                     "detail_incoherence": detail, "date_verif": datetime.now(timezone.utc).isoformat(),
