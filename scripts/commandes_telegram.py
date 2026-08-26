@@ -78,6 +78,7 @@ TEXTE_AIDE = (
     "<b>Commandes disponibles</b>\n\n"
     "/statut — indicateur combine par strategie (IC95% + CLV, emoji vert/rouge/neutre)\n"
     "/progression — suivi de la sortie du bruit statistique (direct seul, sans backtest) et temps restant estime\n"
+    "/calibration — verifie si les probabilites predites correspondent au taux de victoire reel (v1.4/v1.5/v1.8/v1.10)\n"
     "/bankroll — bankrolls actuelles des 16 strategies\n"
     "/bilan — bilan du jour (gain, perte, ROI, nb paris, mises)\n"
     "/bilan JJ/MM/AAAA — bilan d'une date precise\n"
@@ -335,7 +336,73 @@ def traiter_statut():
     return msg
 
 
-def trouver_point_sortie_bruit(sous_tries, returns_tries):
+def traiter_calibration():
+    chemin_log = f"{RACINE}/paris_virtuels.csv"
+    if not os.path.exists(chemin_log):
+        return "Aucun pari enregistre pour l'instant."
+    with open(chemin_log, "r", encoding="utf-8") as f:
+        lignes_csv = list(csv.DictReader(f))
+
+    MODELES_CALIBRABLES = ["v14", "v15", "v18", "v110"]
+    BINS = [(0.10, 0.15), (0.15, 0.20), (0.20, 0.25), (0.25, 0.30), (0.30, 0.40), (0.40, 1.01)]
+
+    msg = "📐 <b>Calibration des probabilites predites</b>\n\n"
+    msg += (
+        "<i>Verifie si, quand le modele annonce X% de chances de gagner, "
+        "le taux de victoire reel observe est bien proche de X%. "
+        "Calibrable uniquement pour v1.4/v1.5/v1.8/v1.10 (cote et EV journalises - "
+        "place et 2sur4 ne journalisent pas leur probabilite). "
+        "Un ecart important signale un modele mal calibre (trop optimiste ou trop prudent), "
+        "meme si son ROI global reste correct.</i>\n\n"
+    )
+
+    for cle in MODELES_CALIBRABLES:
+        nom = NOMS_AFFICHAGE[cle]
+        nom_log = cle_log_modele(cle)
+        sous = [
+            l for l in lignes_csv
+            if l.get("modele") == nom_log and l.get("resultat") in ("GAGNANT", "PERDANT")
+            and l.get("cote") and l.get("ev")
+        ]
+        if len(sous) < 30:
+            msg += f"<b>{nom}</b> : echantillon trop petit (n={len(sous)})\n\n"
+            continue
+
+        lignes_avec_proba = []
+        for l in sous:
+            try:
+                cote = float(l["cote"])
+                ev = float(l["ev"])
+                if cote <= 0:
+                    continue
+                proba = (ev + 1) / cote
+                gagnant = 1 if l["resultat"] == "GAGNANT" else 0
+                lignes_avec_proba.append((proba, gagnant))
+            except (ValueError, ZeroDivisionError):
+                continue
+
+        msg += f"<b>{nom}</b> (n={len(lignes_avec_proba)})\n"
+        au_moins_un_bin = False
+        for bas, haut in BINS:
+            sous_bin = [(p, g) for p, g in lignes_avec_proba if bas <= p < haut]
+            if len(sous_bin) < 10:
+                continue
+            au_moins_un_bin = True
+            n_bin = len(sous_bin)
+            proba_moy = sum(p for p, g in sous_bin) / n_bin
+            taux_reel = sum(g for p, g in sous_bin) / n_bin
+            ecart = taux_reel - proba_moy
+            symbole = "≈" if abs(ecart) < 0.03 else ("🔺" if ecart > 0 else "🔻")
+            haut_affiche = f"{haut:.0%}" if haut <= 1.0 else "100%+"
+            msg += f"  {bas:.0%}-{haut_affiche} : predit {proba_moy:.1%}, reel {taux_reel:.1%} {symbole} (n={n_bin})\n"
+        if not au_moins_un_bin:
+            msg += "  Pas encore assez de paris par tranche pour une calibration fiable.\n"
+        msg += "\n"
+
+    return msg
+
+
+
     """Parcourt chronologiquement les paris deja tries et retrouve
     l'index exact ou n>=SEUIL_MIN_PARIS_SORTIE_BRUIT ET la largeur d'IC
     passe sous SEUIL_LARGEUR_IC_SORTIE_BRUIT pour la premiere fois.
@@ -657,6 +724,8 @@ def main():
             envoyer_telegram(traiter_statut())
         elif commande == "/progression":
             envoyer_telegram(traiter_progression())
+        elif commande == "/calibration":
+            envoyer_telegram(traiter_calibration())
         elif commande == "/bankroll":
             envoyer_telegram(traiter_bankroll())
         elif commande == "/bilan":
