@@ -130,7 +130,7 @@ def extraire_cote_multi(data, type_pari):
             continue
         mise_base = pari.get("miseBase", 300)
         for rapport in pari.get("rapports", []):
-            libelle = rapport.get("libelle", "")
+            libelle = rapport.get("libelle") or ""
             if "en 4" in libelle:
                 dividende = rapport.get("dividendePourUneMiseDeBase")
                 if dividende is not None and dividende > 0:
