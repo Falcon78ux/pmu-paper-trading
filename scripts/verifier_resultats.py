@@ -114,18 +114,29 @@ def extraire_trio(data):
 
 
 def extraire_cote_multi(data, type_pari):
-    meilleure_cote = None
+    """CORRIGE (26 aout) : le MULTI/MINI_MULTI a plusieurs paliers
+    ("en 4", "en 5", "en 6", "en 7") correspondant au nombre de
+    chevaux joues sur le ticket - PAS des gains partiels differents,
+    le meme resultat gagnant mais un tarif different selon combien de
+    chevaux on a selectionne. Notre strategie ne joue TOUJOURS que 4
+    chevaux exacts (le palier "en 4") - prendre le dividende MAXIMUM
+    parmi tous les paliers (ancien comportement) pouvait
+    accidentellement substituer un autre palier (ex. "en 5") quand
+    "en 4" affichait 0 (aucun autre parieur n'avait achete ce ticket
+    exact ce jour-la), gonflant artificiellement le gain. On cible
+    desormais specifiquement le libelle contenant "en 4"."""
     for pari in data:
         if pari.get("typePari") != type_pari:
             continue
         mise_base = pari.get("miseBase", 300)
         for rapport in pari.get("rapports", []):
-            dividende = rapport.get("dividendePourUneMiseDeBase")
-            if dividende is not None:
-                cote = dividende / mise_base
-                if meilleure_cote is None or cote > meilleure_cote:
-                    meilleure_cote = cote
-    return meilleure_cote
+            libelle = rapport.get("libelle", "")
+            if "en 4" in libelle:
+                dividende = rapport.get("dividendePourUneMiseDeBase")
+                if dividende is not None and dividende > 0:
+                    return dividende / mise_base
+                return None
+    return None
 
 
 def extraire_couple_gagnant(data):
