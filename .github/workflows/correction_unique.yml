@@ -1,0 +1,34 @@
+name: Correction historique ponctuelle (26 aout)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  corriger:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Recuperer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Installer les dependances
+        run: pip install -r requirements.txt
+
+      - name: Executer la correction historique
+        run: python scripts/correction_historique_26aout.py
+
+      - name: Sauvegarder les corrections
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add paris_virtuels.csv bankroll_trio.json bankroll_couple_harville.json
+          git diff --quiet --cached || git commit -m "Correction historique : trio degrade et couple multiple (26 aout)"
+          git pull --rebase --autostash -X theirs origin main
+          git push
