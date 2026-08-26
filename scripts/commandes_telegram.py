@@ -65,7 +65,7 @@ REFERENCE_BACKTEST = {
     "couple_harville": {"n": 15980, "roi": 0.6757},
     "place": {"n": 16635, "roi": 0.2339},  # CORRIGE (25 aout) : reconfirme avec vrais rapports (place_historique.csv), quasi identique a l'ancienne valeur
     "2sur4": {"n": 10312, "roi": 0.838},
-    "trio": {"n": 14993, "roi": 1.3745},  # CORRIGE (25 aout) : reconfirme avec vrais rapports (trio_historique.csv), quasi identique a l'ancienne valeur
+    "trio": {"n": 14993, "roi": 1.6530},  # CORRIGE (26 aout) : ancienne valeur (1.3745) sous-estimait trio - ne comptait pas les gains legitimes sur les Trio "degrades" (rapport a 2 chevaux au lieu de 3, ~13.7% des courses selon un echantillon de 300)
     "multi": {"n": 6366, "roi": 1.9111},  # CORRIGE (25 aout) : ancienne valeur (n=10206, roi=4.60) provenait d'une estimation theorique, jamais confirmee par de vrais rapports. Recalculee a partir de la collecte complete de multi_historique.csv (vrais rapports MULTI/MINI_MULTI, 28030 courses interrogees).
     "2favori": {"n": 3171, "roi": 0.3514},  # CORRIGE (25 aout) : reconstruction complete du modele (jamais retestee depuis le deploiement initial) donne un resultat different de l'ancienne reference (n=2645, roi=0.2501)
 }
