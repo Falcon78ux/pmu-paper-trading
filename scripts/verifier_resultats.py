@@ -363,6 +363,28 @@ def main():
                 notre_pick = frozenset([num_pmu_1, num_pmu_2])
 
                 if not couple_reel_liste:
+                    delai_depasse = False
+                    try:
+                        date_detect = datetime.fromisoformat(l.get("date_detection", ""))
+                        if (datetime.now(timezone.utc) - date_detect).total_seconds() > 48 * 3600:
+                            delai_depasse = True
+                    except (ValueError, TypeError):
+                        pass
+
+                    if delai_depasse:
+                        l["resultat"] = "ANNULE"
+                        l["gain_euros"] = "0.00"
+                        ecrire_audit({
+                            "race_id": race_id, "modele": "couple_harville",
+                            "chevaux_paries": "|".join(chevaux_paries),
+                            "rangs_arrivee_chevaux_paries": "",
+                            "top4_reel": top4_reel_str, "combinaison_rapport_brute": "indisponible_definitif_apres_48h",
+                            "cote_utilisee": "", "gain_calcule": "0.00", "resultat": "ANNULE",
+                            "coherence_verifiee": "OK", "detail_incoherence": "Rapport COUPLE jamais disponible apres 48h - mise remboursee",
+                            "date_verif": datetime.now(timezone.utc).isoformat(),
+                        })
+                        continue
+
                     ecrire_audit({
                         "race_id": race_id, "modele": "couple_harville",
                         "chevaux_paries": "|".join(chevaux_paries),
@@ -415,6 +437,30 @@ def main():
                 a_gagne = all(r is not None and r <= 4 for r in rangs)
 
                 if a_gagne and not cote_2sur4:
+                    # CORRIGE (26 aout) : meme protection anti-boucle-
+                    # infinie que pour trio/couple - si le pari est
+                    # gagnant mais la cote reste introuvable pendant
+                    # plus de 48h, on abandonne et on rembourse la
+                    # mise plutot que de retenter indefiniment.
+                    delai_depasse = False
+                    try:
+                        date_detect = datetime.fromisoformat(l.get("date_detection", ""))
+                        if (datetime.now(timezone.utc) - date_detect).total_seconds() > 48 * 3600:
+                            delai_depasse = True
+                    except (ValueError, TypeError):
+                        pass
+                    if delai_depasse:
+                        l["resultat"] = "ANNULE"
+                        l["gain_euros"] = "0.00"
+                        ecrire_audit({
+                            "race_id": race_id, "modele": "2sur4",
+                            "chevaux_paries": "|".join(chevaux_paries),
+                            "rangs_arrivee_chevaux_paries": "|".join(str(r) for r in rangs),
+                            "top4_reel": top4_reel_str, "combinaison_rapport_brute": "gagnant_sans_cote_apres_48h",
+                            "cote_utilisee": "", "gain_calcule": "0.00", "resultat": "ANNULE",
+                            "coherence_verifiee": "OK", "detail_incoherence": "Gagnant mais cote jamais trouvee apres 48h - mise remboursee",
+                            "date_verif": datetime.now(timezone.utc).isoformat(),
+                        })
                     continue
 
                 mise = float(l.get("mise", 0) or 0)
@@ -453,6 +499,37 @@ def main():
                 a_gagne_independant = set(rangs) == {1, 2, 3}
 
                 if trio_reel_ensemble is None:
+                    # CORRIGE (26 aout) : evite la boucle infinie de
+                    # re-tentatives - si le rapport TRIO reste
+                    # indisponible/NP pendant plus de 48h apres la
+                    # detection du pari, c'est que le pool a ete
+                    # declare definitivement annule par le PMU (jamais
+                    # de resolution possible) - on arrete de reessayer
+                    # et on rembourse la mise (gain=0) plutot que de
+                    # retenter indefiniment toutes les 15 minutes.
+                    delai_depasse = False
+                    try:
+                        date_detect = datetime.fromisoformat(l.get("date_detection", ""))
+                        if (datetime.now(timezone.utc) - date_detect).total_seconds() > 48 * 3600:
+                            delai_depasse = True
+                    except (ValueError, TypeError):
+                        pass
+
+                    if delai_depasse:
+                        mise = float(l.get("mise", 0) or 0)
+                        l["resultat"] = "ANNULE"
+                        l["gain_euros"] = "0.00"
+                        ecrire_audit({
+                            "race_id": race_id, "modele": "trio",
+                            "chevaux_paries": "|".join(chevaux_paries),
+                            "rangs_arrivee_chevaux_paries": "|".join(str(r) for r in rangs),
+                            "top4_reel": top4_reel_str, "combinaison_rapport_brute": "NP_definitif_apres_48h",
+                            "cote_utilisee": "", "gain_calcule": "0.00", "resultat": "ANNULE",
+                            "coherence_verifiee": "OK", "detail_incoherence": "Rapport TRIO jamais disponible apres 48h - pool declare annule, mise remboursee",
+                            "date_verif": datetime.now(timezone.utc).isoformat(),
+                        })
+                        continue
+
                     ecrire_audit({
                         "race_id": race_id, "modele": "trio",
                         "chevaux_paries": "|".join(chevaux_paries),
@@ -479,6 +556,25 @@ def main():
                     a_gagne = ensemble_parie == trio_reel_ensemble
 
                 if a_gagne and not trio_reel_cote:
+                    delai_depasse = False
+                    try:
+                        date_detect = datetime.fromisoformat(l.get("date_detection", ""))
+                        if (datetime.now(timezone.utc) - date_detect).total_seconds() > 48 * 3600:
+                            delai_depasse = True
+                    except (ValueError, TypeError):
+                        pass
+                    if delai_depasse:
+                        l["resultat"] = "ANNULE"
+                        l["gain_euros"] = "0.00"
+                        ecrire_audit({
+                            "race_id": race_id, "modele": "trio",
+                            "chevaux_paries": "|".join(chevaux_paries),
+                            "rangs_arrivee_chevaux_paries": "|".join(str(r) for r in rangs),
+                            "top4_reel": top4_reel_str, "combinaison_rapport_brute": "gagnant_sans_cote_apres_48h",
+                            "cote_utilisee": "", "gain_calcule": "0.00", "resultat": "ANNULE",
+                            "coherence_verifiee": "OK", "detail_incoherence": "Gagnant mais cote jamais trouvee apres 48h - mise remboursee",
+                            "date_verif": datetime.now(timezone.utc).isoformat(),
+                        })
                     continue
 
                 mise = float(l.get("mise", 0) or 0)
@@ -524,6 +620,25 @@ def main():
                 cote_multi = extraire_cote_multi(rapports_data, type_pari_multi) if rapports_data else None
 
                 if a_gagne and not cote_multi:
+                    delai_depasse = False
+                    try:
+                        date_detect = datetime.fromisoformat(l.get("date_detection", ""))
+                        if (datetime.now(timezone.utc) - date_detect).total_seconds() > 48 * 3600:
+                            delai_depasse = True
+                    except (ValueError, TypeError):
+                        pass
+                    if delai_depasse:
+                        l["resultat"] = "ANNULE"
+                        l["gain_euros"] = "0.00"
+                        ecrire_audit({
+                            "race_id": race_id, "modele": type_pari_multi.lower() if type_pari_multi != "MULTI" else "multi",
+                            "chevaux_paries": "|".join(chevaux_paries),
+                            "rangs_arrivee_chevaux_paries": "|".join(str(r) for r in rangs),
+                            "top4_reel": top4_reel_str, "combinaison_rapport_brute": "gagnant_sans_cote_apres_48h",
+                            "cote_utilisee": "", "gain_calcule": "0.00", "resultat": "ANNULE",
+                            "coherence_verifiee": "OK", "detail_incoherence": "Gagnant mais cote jamais trouvee apres 48h - mise remboursee",
+                            "date_verif": datetime.now(timezone.utc).isoformat(),
+                        })
                     continue
 
                 mise = float(l.get("mise", 0) or 0)
