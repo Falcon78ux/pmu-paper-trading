@@ -62,7 +62,7 @@ REFERENCE_BACKTEST = {
     "v110favori": {"n": 7590, "roi": 0.3584},
     "v110d4": {"n": 3718, "roi": 0.5183},
     "consensus_place": {"n": 7811, "roi": 0.3738},
-    "couple_harville": {"n": 15980, "roi": 0.6757},
+    "couple_harville": {"n": 16159, "roi": 0.7088},  # CORRIGE (26 aout) : ancienne valeur (0.6757) sous-estimait - ne verifiait qu'UNE combinaison gagnante, ratant les cas d'egalite/dead-heat (~25% des courses ont plusieurs combinaisons gagnantes simultanees)
     "place": {"n": 16635, "roi": 0.2339},  # CORRIGE (25 aout) : reconfirme avec vrais rapports (place_historique.csv), quasi identique a l'ancienne valeur
     "2sur4": {"n": 10312, "roi": 0.838},
     "trio": {"n": 14993, "roi": 1.6530},  # CORRIGE (26 aout) : ancienne valeur (1.3745) sous-estimait trio - ne comptait pas les gains legitimes sur les Trio "degrades" (rapport a 2 chevaux au lieu de 3, ~13.7% des courses selon un echantillon de 300)
