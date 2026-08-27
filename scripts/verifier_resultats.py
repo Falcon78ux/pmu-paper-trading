@@ -221,6 +221,8 @@ def main():
     bankroll_consensus_place, chemin_bankroll_consensus_place = get_bankroll(RACINE, "consensus_place")
     bankroll_v110d4, chemin_bankroll_v110d4 = get_bankroll(RACINE, "v110d4")
     bankroll_v110sniper, chemin_bankroll_v110sniper = get_bankroll(RACINE, "v110sniper")
+    bankroll_v110place, chemin_bankroll_v110place = get_bankroll(RACINE, "v110place")
+    bankroll_v110antifav, chemin_bankroll_v110antifav = get_bankroll(RACINE, "v110antifav")
 
     chemin_log = f"{RACINE}/paris_virtuels.csv"
     if not os.path.exists(chemin_log):
@@ -322,7 +324,7 @@ def main():
         if nb_partants_course > 0 and hippodrome_nom:
             maj_hippodrome(etat_hippodromes, hippodrome_nom, somme_ecart_course, nb_partants_course)
 
-        paris_combines_en_attente = {"place", "2sur4", "trio", "multi", "couple_harville"}
+        paris_combines_en_attente = {"place", "2sur4", "trio", "multi", "couple_harville", "v110place"}
         a_un_pari_combine_en_attente = any(
             l["race_id"] == race_id and l["modele"] in paris_combines_en_attente and l.get("resultat", "") == ""
             for l in lignes
@@ -675,6 +677,24 @@ def main():
                 continue
             rang_reel = rang_par_nom.get(cheval_parie)
 
+            if l["modele"] == "v110place":
+                if course_combine_incomplete:
+                    continue
+                num_pmu = participant_correspondant.get("numPmu")
+                mise = float(l.get("mise", 0) or 0)
+                cote_place_reelle = rapports_place.get(num_pmu) if rapports_place else None
+                a_place = cote_place_reelle is not None
+                gain_euros = mise * (cote_place_reelle - 1) if a_place else -mise
+                l["resultat"] = "PLACE" if a_place else "NON_PLACE"
+                l["gain_euros"] = f"{gain_euros:.2f}"
+                l["cote"] = f"{cote_place_reelle:.2f}" if a_place else ""
+                bankroll_v110place += gain_euros
+
+                if not etat_pause.get("v110place", False):
+                    emoji = "✅" if a_place else "❌"
+                    lignes_message.append(f"{emoji} [v110place] {cheval_parie} (mise {mise:.2f}EUR) — gain {gain_euros:+.2f}EUR | bankroll v110place : {bankroll_v110place:.2f}EUR")
+                continue
+
             if l["modele"] == "place":
                 if course_combine_incomplete:
                     continue
@@ -770,6 +790,10 @@ def main():
                 bankroll_v110sniper += gain_euros
                 bankroll_apres = bankroll_v110sniper
                 cle_pause = "v110sniper"
+            elif l["modele"] == "v110antifav":
+                bankroll_v110antifav += gain_euros
+                bankroll_apres = bankroll_v110antifav
+                cle_pause = "v110antifav"
             elif l["modele"] == "consensus_place":
                 bankroll_consensus_place += gain_euros
                 bankroll_apres = bankroll_consensus_place
@@ -839,6 +863,8 @@ def main():
     mettre_a_jour_bankroll(chemin_bankroll_consensus_place, bankroll_consensus_place)
     mettre_a_jour_bankroll(chemin_bankroll_v110d4, bankroll_v110d4)
     mettre_a_jour_bankroll(chemin_bankroll_v110sniper, bankroll_v110sniper)
+    mettre_a_jour_bankroll(chemin_bankroll_v110place, bankroll_v110place)
+    mettre_a_jour_bankroll(chemin_bankroll_v110antifav, bankroll_v110antifav)
 
     sauvegarder_json(f"{RACINE}/etat_drivers.json", etat_drivers)
     sauvegarder_json(f"{RACINE}/etat_hippodromes.json", etat_hippodromes)
