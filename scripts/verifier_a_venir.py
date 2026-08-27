@@ -46,7 +46,8 @@ SEUIL_EV = 0.10
 FENETRE_MIN_MINUTES = 15
 FENETRE_MAX_MINUTES = 40
 SEUIL_OUTSIDER_DUTCHING = 8.0
-SEUIL_PROBA_SNIPER = 0.45  # NOUVEAU (27 aout) : strategie v110sniper - filtre supplementaire sur v1.10 (EV>10% deja requis), backtest n=966, taux_victoire=50.7%, ROI=+20.27%, croissance=+76.2%/an, drawdown=9.4% (le plus bas de toutes les strategies EV-based du systeme)
+SEUIL_PROBA_SNIPER = 0.45  # v110sniper, backtest n=966, taux_victoire=50.7%, ROI=+20.27%, croissance=+76.2%/an, drawdown=9.4%
+SEUIL_COTE_FAVORI_ANTIFAV = 2.5  # NOUVEAU (27 aout) : strategie v110antifav - exclut les courses ou le favori du marche est ecrase (cote<2.5), backtest n=26824 (sur 34379), ROI=+26.55%, croissance=+2093.7%/an, drawdown=18.7% (contre +1994.4%/22.7% sans filtre) - confirmation acceleree n=775, jours=25
 
 
 def recuperer_programme_du_jour(date_str):
@@ -146,6 +147,10 @@ def main():
     bankroll_consensus_place, chemin_bankroll_consensus_place = get_bankroll(RACINE, "consensus_place")
     bankroll_v110d4, chemin_bankroll_v110d4 = get_bankroll(RACINE, "v110d4")
     bankroll_v110sniper, chemin_bankroll_v110sniper = get_bankroll(RACINE, "v110sniper")
+    bankroll_v110place, chemin_bankroll_v110place = get_bankroll(RACINE, "v110place")
+    bankroll_v110antifav, chemin_bankroll_v110antifav = get_bankroll(RACINE, "v110antifav")
+    bankroll_v110place, chemin_bankroll_v110place = get_bankroll(RACINE, "v110place")
+    bankroll_v110antifav, chemin_bankroll_v110antifav = get_bankroll(RACINE, "v110antifav")
 
     try:
         courses = recuperer_programme_du_jour(date_str)
@@ -192,6 +197,10 @@ def main():
         value_bets_v110 = []
         value_bets_v110d4 = []
         value_bets_v110sniper = []
+        value_bets_v110place = []
+        value_bets_v110antifav = []
+        value_bets_v110place = []
+        value_bets_v110antifav = []
         candidats_place = []
         toutes_probas_v110 = []
 
@@ -327,6 +336,10 @@ def main():
                             if mise110sniper > 0:
                                 value_bets_v110sniper.append((cheval, cote, proba110, ev110, mise110sniper))
 
+                        mise110place = calculer_mise_v110(proba110, cote, bankroll_v110place, deferre_4_pieds)
+                        if mise110place > 0:
+                            value_bets_v110place.append((cheval, cote, proba110, ev110, mise110place, num_pmu_cheval))
+
                 proba_place, contrib_place = calculer_proba_v110_ou_place_avec_contributions(valeurs_communes, modele_place)
                 if proba_place is not None:
                     candidats_place.append((cheval, proba_place, cote))
@@ -431,6 +444,16 @@ def main():
                     mise_v110favori = calculer_mise_v110(proba_v110, cote_v110, bankroll_v110favori, deferre_v110)
                     if mise_v110favori > 0:
                         value_bets_v110favori.append((cheval_v110, cote_v110, proba_v110, ev_v110, mise_v110favori, deferre_v110))
+
+        value_bets_v110antifav = []
+        if partants_avec_cote and value_bets_v110:
+            cote_favori_marche_antifav = min(c for _, c in partants_avec_cote)
+            if cote_favori_marche_antifav >= SEUIL_COTE_FAVORI_ANTIFAV:
+                for item in value_bets_v110:
+                    cheval_v110, cote_v110, proba_v110, ev_v110, deferre_v110 = item[0], item[1], item[2], item[3], item[5]
+                    mise_v110antifav = calculer_mise_v110(proba_v110, cote_v110, bankroll_v110antifav, deferre_v110)
+                    if mise_v110antifav > 0:
+                        value_bets_v110antifav.append((cheval_v110, cote_v110, proba_v110, ev_v110, mise_v110antifav))
 
         value_bets_v14favori = []
         if partants_avec_cote and value_bets_v14:
@@ -555,6 +578,12 @@ def main():
             for cheval, cote, proba, ev, mise in value_bets_v110sniper:
                 bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
+        if value_bets_v110place and not etat_pause.get("v110place", False):
+            bloc = f"<b>v1.10-PLACE</b> ({bankroll_v110place:.0f}EUR) : " + ", ".join(f"{c} ({m:.0f}EUR)" for c, _, _, _, m, _ in value_bets_v110place) + "\n"
+            sections_msg.append(bloc)
+        if value_bets_v110antifav and not etat_pause.get("v110antifav", False):
+            bloc = f"<b>v1.10-AntiFav</b> ({bankroll_v110antifav:.0f}EUR) : " + ", ".join(f"{c} ({m:.0f}EUR)" for c, _, _, _, m in value_bets_v110antifav) + "\n"
+            sections_msg.append(bloc)
         if consensus_place_pick and not etat_pause.get("consensus_place", False):
             cheval, cote, proba, ev, mise = consensus_place_pick
             bloc = f"<b>Modele CONSENSUS-PLACE</b> (bankroll : {bankroll_consensus_place:.0f}EUR) :\n"
@@ -620,6 +649,10 @@ def main():
             log_paris.append({"race_id": race_id, "modele": "v110d4", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
         for cheval, cote, proba, ev, mise in value_bets_v110sniper:
             log_paris.append({"race_id": race_id, "modele": "v110sniper", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+        for cheval, cote, proba, ev, mise, num_pmu in value_bets_v110place:
+            log_paris.append({"race_id": race_id, "modele": "v110place", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+        for cheval, cote, proba, ev, mise in value_bets_v110antifav:
+            log_paris.append({"race_id": race_id, "modele": "v110antifav", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
         if consensus_place_pick:
             cheval, cote, proba, ev, mise = consensus_place_pick
             log_paris.append({"race_id": race_id, "modele": "consensus_place", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
