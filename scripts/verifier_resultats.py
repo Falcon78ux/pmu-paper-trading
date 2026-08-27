@@ -220,6 +220,7 @@ def main():
     bankroll_couple_harville, chemin_bankroll_couple_harville = get_bankroll(RACINE, "couple_harville")
     bankroll_consensus_place, chemin_bankroll_consensus_place = get_bankroll(RACINE, "consensus_place")
     bankroll_v110d4, chemin_bankroll_v110d4 = get_bankroll(RACINE, "v110d4")
+    bankroll_v110sniper, chemin_bankroll_v110sniper = get_bankroll(RACINE, "v110sniper")
 
     chemin_log = f"{RACINE}/paris_virtuels.csv"
     if not os.path.exists(chemin_log):
@@ -765,6 +766,10 @@ def main():
                 bankroll_v110d4 += gain_euros
                 bankroll_apres = bankroll_v110d4
                 cle_pause = "v110d4"
+            elif l["modele"] == "v110sniper":
+                bankroll_v110sniper += gain_euros
+                bankroll_apres = bankroll_v110sniper
+                cle_pause = "v110sniper"
             elif l["modele"] == "consensus_place":
                 bankroll_consensus_place += gain_euros
                 bankroll_apres = bankroll_consensus_place
@@ -833,6 +838,7 @@ def main():
     mettre_a_jour_bankroll(chemin_bankroll_couple_harville, bankroll_couple_harville)
     mettre_a_jour_bankroll(chemin_bankroll_consensus_place, bankroll_consensus_place)
     mettre_a_jour_bankroll(chemin_bankroll_v110d4, bankroll_v110d4)
+    mettre_a_jour_bankroll(chemin_bankroll_v110sniper, bankroll_v110sniper)
 
     sauvegarder_json(f"{RACINE}/etat_drivers.json", etat_drivers)
     sauvegarder_json(f"{RACINE}/etat_hippodromes.json", etat_hippodromes)
