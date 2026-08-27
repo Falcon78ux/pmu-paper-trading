@@ -46,6 +46,7 @@ SEUIL_EV = 0.10
 FENETRE_MIN_MINUTES = 15
 FENETRE_MAX_MINUTES = 40
 SEUIL_OUTSIDER_DUTCHING = 8.0
+SEUIL_PROBA_SNIPER = 0.45  # NOUVEAU (27 aout) : strategie v110sniper - filtre supplementaire sur v1.10 (EV>10% deja requis), backtest n=966, taux_victoire=50.7%, ROI=+20.27%, croissance=+76.2%/an, drawdown=9.4% (le plus bas de toutes les strategies EV-based du systeme)
 
 
 def recuperer_programme_du_jour(date_str):
@@ -144,6 +145,7 @@ def main():
     bankroll_couple_harville, chemin_bankroll_couple_harville = get_bankroll(RACINE, "couple_harville")
     bankroll_consensus_place, chemin_bankroll_consensus_place = get_bankroll(RACINE, "consensus_place")
     bankroll_v110d4, chemin_bankroll_v110d4 = get_bankroll(RACINE, "v110d4")
+    bankroll_v110sniper, chemin_bankroll_v110sniper = get_bankroll(RACINE, "v110sniper")
 
     try:
         courses = recuperer_programme_du_jour(date_str)
@@ -189,6 +191,7 @@ def main():
         value_bets_v18 = []
         value_bets_v110 = []
         value_bets_v110d4 = []
+        value_bets_v110sniper = []
         candidats_place = []
         toutes_probas_v110 = []
 
@@ -318,6 +321,11 @@ def main():
                             mise110d4 = calculer_mise_v110(proba110, cote, bankroll_v110d4, deferre_4_pieds)
                             if mise110d4 > 0:
                                 value_bets_v110d4.append((cheval, cote, proba110, ev110, mise110d4))
+
+                        if proba110 >= SEUIL_PROBA_SNIPER:
+                            mise110sniper = calculer_mise_v110(proba110, cote, bankroll_v110sniper, deferre_4_pieds)
+                            if mise110sniper > 0:
+                                value_bets_v110sniper.append((cheval, cote, proba110, ev110, mise110sniper))
 
                 proba_place, contrib_place = calculer_proba_v110_ou_place_avec_contributions(valeurs_communes, modele_place)
                 if proba_place is not None:
@@ -542,6 +550,11 @@ def main():
             for cheval, cote, proba, ev, mise in value_bets_v110d4:
                 bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
+        if value_bets_v110sniper and not etat_pause.get("v110sniper", False):
+            bloc = f"<b>Modele v1.10-SNIPER</b> (bankroll : {bankroll_v110sniper:.0f}EUR, proba≥{SEUIL_PROBA_SNIPER:.0%}) :\n"
+            for cheval, cote, proba, ev, mise in value_bets_v110sniper:
+                bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
+            sections_msg.append(bloc)
         if consensus_place_pick and not etat_pause.get("consensus_place", False):
             cheval, cote, proba, ev, mise = consensus_place_pick
             bloc = f"<b>Modele CONSENSUS-PLACE</b> (bankroll : {bankroll_consensus_place:.0f}EUR) :\n"
@@ -605,6 +618,8 @@ def main():
             log_paris.append({"race_id": race_id, "modele": "v110favori", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
         for cheval, cote, proba, ev, mise in value_bets_v110d4:
             log_paris.append({"race_id": race_id, "modele": "v110d4", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+        for cheval, cote, proba, ev, mise in value_bets_v110sniper:
+            log_paris.append({"race_id": race_id, "modele": "v110sniper", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
         if consensus_place_pick:
             cheval, cote, proba, ev, mise = consensus_place_pick
             log_paris.append({"race_id": race_id, "modele": "consensus_place", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
