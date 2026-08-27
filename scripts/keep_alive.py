@@ -67,7 +67,7 @@ def main():
         cles_modeles = [
             "v14", "v14dutch", "v14favori", "v14sire",
             "v15", "v18",
-            "v110", "v110dutch", "v110favori", "v110d4", "v110sniper",
+            "v110", "v110dutch", "v110favori", "v110d4", "v110sniper", "v110place", "v110antifav",
             "consensus_place", "couple_harville",
             "place", "2sur4", "trio", "multi", "2favori",
         ]
@@ -82,6 +82,7 @@ def main():
             "v15": "v1.5", "v18": "v1.8",
             "v110": "v1.10", "v110dutch": "v1.10-Dutch", "v110favori": "v1.10-Favori",
             "v110d4": "v1.10-D4", "v110sniper": "v1.10-Sniper",
+            "v110place": "v1.10-Place", "v110antifav": "v1.10-AntiFav",
             "consensus_place": "Consensus-Place", "couple_harville": "Couple-Harville",
             "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
             "2favori": "2favori",
@@ -92,6 +93,7 @@ def main():
             "v15": "v1.5", "v18": "v1.8",
             "v110": "v1.10", "v110dutch": "v110dutch", "v110favori": "v110favori",
             "v110d4": "v110d4", "v110sniper": "v110sniper",
+            "v110place": "v110place", "v110antifav": "v110antifav",
             "consensus_place": "consensus_place", "couple_harville": "couple_harville",
             "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
             "2favori": "2favori",
