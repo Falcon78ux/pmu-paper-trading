@@ -34,7 +34,7 @@ RACINE = os.path.join(os.path.dirname(__file__), "..")
 MODELES = [
     "v14", "v14dutch", "v14favori", "v14sire",
     "v15", "v18",
-    "v110", "v110dutch", "v110favori", "v110d4",
+    "v110", "v110dutch", "v110favori", "v110d4", "v110sniper",
     "consensus_place", "couple_harville",
     "place", "2sur4", "trio", "multi", "2favori",
 ]
@@ -43,7 +43,7 @@ NOMS_AFFICHAGE = {
     "v14sire": "v1.4+Genealogie",
     "v15": "v1.5", "v18": "v1.8",
     "v110": "v1.10", "v110dutch": "v1.10-Dutch", "v110favori": "v1.10-Favori",
-    "v110d4": "v1.10-D4",
+    "v110d4": "v1.10-D4", "v110sniper": "v1.10-Sniper",
     "consensus_place": "Consensus-Place", "couple_harville": "Couple-Harville",
     "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
     "2favori": "2favori",
@@ -60,6 +60,7 @@ REFERENCE_BACKTEST = {
     "v110dutch": {"n": 14873, "roi": 0.2319},
     "v110favori": {"n": 7590, "roi": 0.3584},
     "v110d4": {"n": 3718, "roi": 0.5183},
+    "v110sniper": {"n": 966, "roi": 0.2027},
     "consensus_place": {"n": 7811, "roi": 0.3738},
     "couple_harville": {"n": 16159, "roi": 0.7088},  # CORRIGE (26 aout), coherent avec commandes_telegram.py
     "place": {"n": 16635, "roi": 0.2339},  # CORRIGE (25 aout), coherent avec commandes_telegram.py
@@ -82,7 +83,7 @@ def cle_log_modele(cle):
     code dans paris_virtuels.csv (pas leur nom d'affichage) - meme
     logique que commandes_telegram.py, indispensable pour retrouver
     correctement leurs paris."""
-    if cle in ("v14dutch", "v14favori", "v14sire", "v110dutch", "v110favori", "v110d4", "consensus_place", "couple_harville"):
+    if cle in ("v14dutch", "v14favori", "v14sire", "v110dutch", "v110favori", "v110d4", "v110sniper", "consensus_place", "couple_harville"):
         return cle
     return NOMS_AFFICHAGE[cle]
 
