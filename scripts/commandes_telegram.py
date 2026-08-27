@@ -27,7 +27,7 @@ RACINE = os.path.join(os.path.dirname(__file__), "..")
 MODELES = [
     "v14", "v14dutch", "v14favori", "v14sire",
     "v15", "v18",
-    "v110", "v110dutch", "v110favori", "v110d4",
+    "v110", "v110dutch", "v110favori", "v110d4", "v110sniper",
     "consensus_place", "couple_harville",
     "place", "2sur4", "trio", "multi", "2favori",
 ]
@@ -36,7 +36,7 @@ NOMS_AFFICHAGE = {
     "v14sire": "v1.4+Genealogie",
     "v15": "v1.5", "v18": "v1.8",
     "v110": "v1.10", "v110dutch": "v1.10-Dutch", "v110favori": "v1.10-Favori",
-    "v110d4": "v1.10-D4",
+    "v110d4": "v1.10-D4", "v110sniper": "v1.10-Sniper",
     "consensus_place": "Consensus-Place", "couple_harville": "Couple-Harville",
     "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
     "2favori": "2favori",
@@ -45,7 +45,7 @@ NOMS_AFFICHAGE = {
 MODELES_AVEC_CLV = [
     "v14", "v14dutch", "v14favori", "v14sire",
     "v15", "v18",
-    "v110", "v110dutch", "v110favori", "v110d4",
+    "v110", "v110dutch", "v110favori", "v110d4", "v110sniper",
     "consensus_place",
     "2favori",
 ]
@@ -61,6 +61,7 @@ REFERENCE_BACKTEST = {
     "v110dutch": {"n": 14873, "roi": 0.2319},
     "v110favori": {"n": 7590, "roi": 0.3584},
     "v110d4": {"n": 3718, "roi": 0.5183},
+    "v110sniper": {"n": 966, "roi": 0.2027},
     "consensus_place": {"n": 7811, "roi": 0.3738},
     "couple_harville": {"n": 16159, "roi": 0.7088},  # CORRIGE (26 aout) : ancienne valeur (0.6757) sous-estimait - ne verifiait qu'UNE combinaison gagnante, ratant les cas d'egalite/dead-heat (~25% des courses ont plusieurs combinaisons gagnantes simultanees)
     "place": {"n": 16635, "roi": 0.2339},  # CORRIGE (25 aout) : reconfirme avec vrais rapports (place_historique.csv), quasi identique a l'ancienne valeur
@@ -158,7 +159,7 @@ def cle_log_modele(cle):
     consensus_place et couple_harville sont stockes tels quels dans
     les logs (pas les noms d'affichage), les autres utilisent le nom
     d'affichage."""
-    if cle in ("v14dutch", "v14favori", "v14sire", "v110dutch", "v110favori", "v110d4", "consensus_place", "couple_harville"):
+    if cle in ("v14dutch", "v14favori", "v14sire", "v110dutch", "v110favori", "v110d4", "v110sniper", "consensus_place", "couple_harville"):
         return cle
     return NOMS_AFFICHAGE[cle]
 
@@ -343,7 +344,7 @@ def traiter_calibration():
     with open(chemin_log, "r", encoding="utf-8") as f:
         lignes_csv = list(csv.DictReader(f))
 
-    MODELES_CALIBRABLES = ["v14", "v15", "v18", "v110"]
+    MODELES_CALIBRABLES = ["v14", "v15", "v18", "v110", "v110sniper"]
     BINS = [(0.10, 0.15), (0.15, 0.20), (0.20, 0.25), (0.25, 0.30), (0.30, 0.40), (0.40, 1.01)]
     SEUIL_HAUTE_CONFIANCE = 0.30
 
