@@ -345,6 +345,7 @@ def traiter_calibration():
 
     MODELES_CALIBRABLES = ["v14", "v15", "v18", "v110"]
     BINS = [(0.10, 0.15), (0.15, 0.20), (0.20, 0.25), (0.25, 0.30), (0.30, 0.40), (0.40, 1.01)]
+    SEUIL_HAUTE_CONFIANCE = 0.30
 
     msg = "📐 <b>Calibration des probabilites predites</b>\n\n"
     msg += (
@@ -355,6 +356,8 @@ def traiter_calibration():
         "Un ecart important signale un modele mal calibre (trop optimiste ou trop prudent), "
         "meme si son ROI global reste correct.</i>\n\n"
     )
+
+    donnees_par_modele = {}
 
     for cle in MODELES_CALIBRABLES:
         nom = NOMS_AFFICHAGE[cle]
@@ -377,20 +380,25 @@ def traiter_calibration():
                     continue
                 proba = (ev + 1) / cote
                 gagnant = 1 if l["resultat"] == "GAGNANT" else 0
-                lignes_avec_proba.append((proba, gagnant))
+                lignes_avec_proba.append({
+                    "proba": proba, "gagnant": gagnant,
+                    "race_id": l.get("race_id", ""), "date_detection": l.get("date_detection", ""),
+                })
             except (ValueError, ZeroDivisionError):
                 continue
+
+        donnees_par_modele[cle] = lignes_avec_proba
 
         msg += f"<b>{nom}</b> (n={len(lignes_avec_proba)})\n"
         au_moins_un_bin = False
         for bas, haut in BINS:
-            sous_bin = [(p, g) for p, g in lignes_avec_proba if bas <= p < haut]
+            sous_bin = [x for x in lignes_avec_proba if bas <= x["proba"] < haut]
             if len(sous_bin) < 10:
                 continue
             au_moins_un_bin = True
             n_bin = len(sous_bin)
-            proba_moy = sum(p for p, g in sous_bin) / n_bin
-            taux_reel = sum(g for p, g in sous_bin) / n_bin
+            proba_moy = sum(x["proba"] for x in sous_bin) / n_bin
+            taux_reel = sum(x["gagnant"] for x in sous_bin) / n_bin
             ecart = taux_reel - proba_moy
             symbole = "≈" if abs(ecart) < 0.03 else ("🔺" if ecart > 0 else "🔻")
             haut_affiche = f"{haut:.0%}" if haut <= 1.0 else "100%+"
@@ -398,6 +406,53 @@ def traiter_calibration():
         if not au_moins_un_bin:
             msg += "  Pas encore assez de paris par tranche pour une calibration fiable.\n"
         msg += "\n"
+
+    # --- NOUVEAU : deux tests pour distinguer derive reelle vs sequence
+    # malchanceuse correlee, sur le sous-ensemble haute confiance (>=30%) ---
+    msg += "🔬 <b>Tests de diagnostic (tranche haute confiance ≥30%)</b>\n\n"
+
+    for cle in MODELES_CALIBRABLES:
+        if cle not in donnees_par_modele:
+            continue
+        nom = NOMS_AFFICHAGE[cle]
+        haute_confiance = [x for x in donnees_par_modele[cle] if x["proba"] >= SEUIL_HAUTE_CONFIANCE and x["date_detection"]]
+        if len(haute_confiance) < 20:
+            continue
+        haute_confiance_triee = sorted(haute_confiance, key=lambda x: x["date_detection"])
+        milieu = len(haute_confiance_triee) // 2
+        premiere_moitie = haute_confiance_triee[:milieu]
+        deuxieme_moitie = haute_confiance_triee[milieu:]
+        taux_1 = sum(x["gagnant"] for x in premiere_moitie) / len(premiere_moitie) if premiere_moitie else 0
+        taux_2 = sum(x["gagnant"] for x in deuxieme_moitie) / len(deuxieme_moitie) if deuxieme_moitie else 0
+        msg += (
+            f"<b>{nom}</b> - Test temporel : 1ere moitie (n={len(premiere_moitie)}) "
+            f"taux={taux_1:.1%} vs 2eme moitie (n={len(deuxieme_moitie)}) taux={taux_2:.1%}\n"
+        )
+
+    # Test de chevauchement entre modeles
+    ensembles_race_ids = {}
+    for cle in MODELES_CALIBRABLES:
+        if cle not in donnees_par_modele:
+            continue
+        haute_confiance = [x for x in donnees_par_modele[cle] if x["proba"] >= SEUIL_HAUTE_CONFIANCE and x["race_id"]]
+        ensembles_race_ids[cle] = set(x["race_id"] for x in haute_confiance)
+
+    if len(ensembles_race_ids) >= 2:
+        toutes_courses = set()
+        for s in ensembles_race_ids.values():
+            toutes_courses |= s
+        courses_avec_chevauchement = 0
+        for course in toutes_courses:
+            nb_modeles_presents = sum(1 for s in ensembles_race_ids.values() if course in s)
+            if nb_modeles_presents >= 2:
+                courses_avec_chevauchement += 1
+        taux_chevauchement = courses_avec_chevauchement / len(toutes_courses) if toutes_courses else 0
+        msg += (
+            f"\n<b>Test de chevauchement</b> : {len(toutes_courses)} courses distinctes concernees, "
+            f"{courses_avec_chevauchement} ({taux_chevauchement:.0%}) ont un pari haute-confiance "
+            f"sur au moins 2 modeles simultanement. Un taux eleve confirme que les modeles "
+            f"ne sont pas des confirmations independantes sur ces courses.\n"
+        )
 
     return msg
 
