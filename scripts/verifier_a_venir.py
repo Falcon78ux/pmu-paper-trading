@@ -48,6 +48,7 @@ FENETRE_MAX_MINUTES = 40
 SEUIL_OUTSIDER_DUTCHING = 8.0
 SEUIL_PROBA_SNIPER = 0.45  # v110sniper, backtest n=966, taux_victoire=50.7%, ROI=+20.27%, croissance=+76.2%/an, drawdown=9.4%
 SEUIL_COTE_FAVORI_ANTIFAV = 2.5  # NOUVEAU (27 aout) : strategie v110antifav - exclut les courses ou le favori du marche est ecrase (cote<2.5), backtest n=26824 (sur 34379), ROI=+26.55%, croissance=+2093.7%/an, drawdown=18.7% (contre +1994.4%/22.7% sans filtre) - confirmation acceleree n=775, jours=25
+SEUIL_ENTROPIE_BASSE = 1.30  # NOUVEAU (28 aout) : strategie v110snipercombine - entropie de Shannon <= P25 (course "lisible") ET proba>=45% (SEUIL_PROBA_SNIPER), backtest n=273, ROI=+32.38%, croissance=+39.7%/an, drawdown=7.4% (meilleur profil rendement/risque par pari trouve a ce jour)
 
 
 def recuperer_programme_du_jour(date_str):
@@ -149,8 +150,7 @@ def main():
     bankroll_v110sniper, chemin_bankroll_v110sniper = get_bankroll(RACINE, "v110sniper")
     bankroll_v110place, chemin_bankroll_v110place = get_bankroll(RACINE, "v110place")
     bankroll_v110antifav, chemin_bankroll_v110antifav = get_bankroll(RACINE, "v110antifav")
-    bankroll_v110place, chemin_bankroll_v110place = get_bankroll(RACINE, "v110place")
-    bankroll_v110antifav, chemin_bankroll_v110antifav = get_bankroll(RACINE, "v110antifav")
+    bankroll_v110snipercombine, chemin_bankroll_v110snipercombine = get_bankroll(RACINE, "v110snipercombine")
 
     try:
         courses = recuperer_programme_du_jour(date_str)
@@ -508,6 +508,26 @@ def main():
                     "mise": mise_couple,
                 }
 
+        # --- NOUVEAU (28 aout) : v110snipercombine - entropie de course
+        # (Shannon) sur TOUTES les probas v1.10 de la course, croisee avec
+        # le filtre sniper (proba>=45%). Backtest : n=273, ROI=+32.38%,
+        # croissance=+39.7%/an, drawdown=7.4% (meilleur profil rendement/
+        # risque par pari trouve a ce jour).
+        value_bets_v110snipercombine = []
+        if len(toutes_probas_v110) >= 2 and value_bets_v110:
+            probas_norm = [p for _, _, p in toutes_probas_v110]
+            somme_probas = sum(probas_norm)
+            if somme_probas > 0:
+                probas_norm = [p / somme_probas for p in probas_norm]
+                entropie_course = -sum(p * math.log(p) for p in probas_norm if p > 0)
+                if entropie_course <= SEUIL_ENTROPIE_BASSE:
+                    for item in value_bets_v110:
+                        cheval_v110, cote_v110, proba_v110, ev_v110, deferre_v110 = item[0], item[1], item[2], item[3], item[5]
+                        if proba_v110 >= SEUIL_PROBA_SNIPER:
+                            mise_combine = calculer_mise_v110(proba_v110, cote_v110, bankroll_v110snipercombine, deferre_v110)
+                            if mise_combine > 0:
+                                value_bets_v110snipercombine.append((cheval_v110, cote_v110, proba_v110, ev_v110, mise_combine))
+
         consensus_place_pick = None
         if meilleur_pick_place is not None and value_bets_v110:
             for item in value_bets_v110:
@@ -584,6 +604,9 @@ def main():
         if value_bets_v110antifav and not etat_pause.get("v110antifav", False):
             bloc = f"<b>v1.10-AntiFav</b> ({bankroll_v110antifav:.0f}EUR) : " + ", ".join(f"{c} ({m:.0f}EUR)" for c, _, _, _, m in value_bets_v110antifav) + "\n"
             sections_msg.append(bloc)
+        if value_bets_v110snipercombine and not etat_pause.get("v110snipercombine", False):
+            bloc = f"<b>v1.10-SniperCombine</b> ({bankroll_v110snipercombine:.0f}EUR) : " + ", ".join(f"{c} ({m:.0f}EUR)" for c, _, _, _, m in value_bets_v110snipercombine) + "\n"
+            sections_msg.append(bloc)
         if consensus_place_pick and not etat_pause.get("consensus_place", False):
             cheval, cote, proba, ev, mise = consensus_place_pick
             bloc = f"<b>Modele CONSENSUS-PLACE</b> (bankroll : {bankroll_consensus_place:.0f}EUR) :\n"
@@ -653,6 +676,8 @@ def main():
             log_paris.append({"race_id": race_id, "modele": "v110place", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
         for cheval, cote, proba, ev, mise in value_bets_v110antifav:
             log_paris.append({"race_id": race_id, "modele": "v110antifav", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+        for cheval, cote, proba, ev, mise in value_bets_v110snipercombine:
+            log_paris.append({"race_id": race_id, "modele": "v110snipercombine", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
         if consensus_place_pick:
             cheval, cote, proba, ev, mise = consensus_place_pick
             log_paris.append({"race_id": race_id, "modele": "consensus_place", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
