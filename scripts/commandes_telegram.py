@@ -85,6 +85,7 @@ TEXTE_AIDE = (
     "/statut — indicateur combine par strategie (IC95% + CLV, emoji vert/rouge/neutre)\n"
     "/progression — suivi de la sortie du bruit statistique (direct seul, sans backtest) et temps restant estime\n"
     "/calibration — verifie si les probabilites predites correspondent au taux de victoire reel (v1.4/v1.5/v1.8/v1.10)\n"
+    "/portefeuille — vue combinee des 21 bankrolls reelles (equivalent portefeuille a poids egaux)\n"
     "/bankroll — bankrolls actuelles des 16 strategies\n"
     "/bilan — bilan du jour (gain, perte, ROI, nb paris, mises)\n"
     "/bilan JJ/MM/AAAA — bilan d'une date precise\n"
@@ -342,7 +343,51 @@ def traiter_statut():
     return msg
 
 
-def traiter_calibration():
+BANKROLL_DEPART_STANDARD = 1236  # meme valeur de depart que toutes les bankrolls individuelles
+
+
+def traiter_portefeuille():
+    """NOUVEAU (28 aout) : vue combinee des 21 bankrolls reelles - suite
+    a la recherche meta-allocation qui a confirme qu'un portefeuille
+    combine (poids egaux, ce que le systeme fait deja nativement en
+    faisant tourner chaque strategie independamment) a un drawdown
+    bien inferieur a la moyenne des strategies individuelles
+    (2.7% vs 3-7% en backtest hors-echantillon sur 21 strategies).
+    Cette commande donne enfin une vue reelle de ce chiffre combine,
+    absente jusqu'ici (chaque strategie n'etait visible qu'isolement
+    via /bilan)."""
+    total_actuel = 0.0
+    total_depart = 0.0
+    details = []
+    for cle in MODELES:
+        bankroll_actuelle, _ = get_bankroll(RACINE, cle)
+        total_actuel += bankroll_actuelle
+        total_depart += BANKROLL_DEPART_STANDARD
+        details.append((NOMS_AFFICHAGE[cle], bankroll_actuelle))
+
+    roi_combine = (total_actuel - total_depart) / total_depart if total_depart > 0 else 0
+
+    msg = "💼 <b>Portefeuille combine (21 strategies)</b>\n\n"
+    msg += (
+        "<i>Vue combinee des 21 bankrolls reelles - chaque strategie tourne "
+        "deja independamment (equivalent a une allocation a poids egaux, "
+        "validee comme l'approche la plus robuste lors de la recherche "
+        "meta-allocation d'aout 2026, y compris teste rigoureusement "
+        "hors-echantillon). Pas encore de suivi du vrai drawdown dans le "
+        "temps - ce chiffre s'accumulera progressivement via le suivi "
+        "hebdomadaire.</i>\n\n"
+    )
+    msg += f"<b>Total combine : {total_actuel:,.0f}EUR</b> (depart : {total_depart:,.0f}EUR, {roi_combine:+.1%})\n\n"
+
+    details_tries = sorted(details, key=lambda x: x[1], reverse=True)
+    msg += "Detail par strategie (triees par bankroll actuelle) :\n"
+    for nom, bankroll in details_tries:
+        msg += f"  {nom} : {bankroll:,.0f}EUR\n"
+
+    return msg
+
+
+
     chemin_log = f"{RACINE}/paris_virtuels.csv"
     if not os.path.exists(chemin_log):
         return "Aucun pari enregistre pour l'instant."
@@ -787,6 +832,8 @@ def main():
             envoyer_telegram(traiter_progression())
         elif commande == "/calibration":
             envoyer_telegram(traiter_calibration())
+        elif commande == "/portefeuille":
+            envoyer_telegram(traiter_portefeuille())
         elif commande == "/bankroll":
             envoyer_telegram(traiter_bankroll())
         elif commande == "/bilan":
