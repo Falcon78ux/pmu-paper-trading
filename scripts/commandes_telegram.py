@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 import requests
 
 sys.path.insert(0, os.path.dirname(__file__))
-from commun import charger_json, sauvegarder_json, envoyer_telegram
+from commun import charger_json, sauvegarder_json, envoyer_telegram, get_bankroll
 
 RACINE = os.path.join(os.path.dirname(__file__), "..")
 
