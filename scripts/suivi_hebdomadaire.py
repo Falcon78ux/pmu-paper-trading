@@ -27,7 +27,7 @@ import statistics
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(__file__))
-from commun import charger_json, sauvegarder_json, envoyer_telegram
+from commun import charger_json, sauvegarder_json, envoyer_telegram, get_bankroll
 
 RACINE = os.path.join(os.path.dirname(__file__), "..")
 
@@ -166,6 +166,32 @@ def enregistrer_snapshot():
     return len(lignes_a_ecrire)
 
 
+BANKROLL_DEPART_STANDARD = 1236
+
+
+def enregistrer_snapshot_portefeuille():
+    """NOUVEAU (28 aout) : accumule un historique du TOTAL combine des
+    21 bankrolls, chaque semaine - absent jusqu'ici (seul le niveau
+    actuel etait consultable, jamais son evolution dans le temps).
+    Permettra, une fois assez de semaines accumulees, de calculer un
+    vrai drawdown du portefeuille combine (comme mesure en backtest
+    lors de la recherche meta-allocation d'aout 2026)."""
+    total_actuel = 0.0
+    for cle in MODELES:
+        bankroll_actuelle, _ = get_bankroll(RACINE, cle)
+        total_actuel += bankroll_actuelle
+
+    chemin = f"{RACINE}/suivi_portefeuille.csv"
+    existe = os.path.exists(chemin)
+    aujourd_hui = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    with open(chemin, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["date_snapshot", "total_bankroll", "nb_strategies"])
+        if not existe:
+            writer.writeheader()
+        writer.writerow({"date_snapshot": aujourd_hui, "total_bankroll": round(total_actuel, 2), "nb_strategies": len(MODELES)})
+    return total_actuel
+
+
 def main():
     etat = charger_json(f"{RACINE}/dernier_suivi_hebdo.json", {"derniere_semaine": None})
     maintenant = datetime.now(timezone.utc)
@@ -180,14 +206,16 @@ def main():
         return
 
     nb_lignes = enregistrer_snapshot()
+    total_portefeuille = enregistrer_snapshot_portefeuille()
     etat["derniere_semaine"] = annee_semaine
     sauvegarder_json(f"{RACINE}/dernier_suivi_hebdo.json", etat)
 
     envoyer_telegram(
         f"📈 <b>Instantane hebdomadaire enregistre</b> ({annee_semaine})\n\n"
-        f"{nb_lignes} modeles consignes dans suivi_hebdomadaire.csv"
+        f"{nb_lignes} modeles consignes dans suivi_hebdomadaire.csv\n"
+        f"Portefeuille combine : {total_portefeuille:,.0f}EUR"
     )
-    print(f"Instantane hebdomadaire enregistre pour {annee_semaine}, {nb_lignes} lignes.")
+    print(f"Instantane hebdomadaire enregistre pour {annee_semaine}, {nb_lignes} lignes. Portefeuille : {total_portefeuille:,.0f}EUR")
 
 
 if __name__ == "__main__":
