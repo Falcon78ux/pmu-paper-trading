@@ -389,6 +389,7 @@ def traiter_portefeuille():
 
 
 
+def traiter_calibration():
     chemin_log = f"{RACINE}/paris_virtuels.csv"
     if not os.path.exists(chemin_log):
         return "Aucun pari enregistre pour l'instant."
@@ -510,6 +511,7 @@ def traiter_portefeuille():
 
 
 
+def trouver_point_sortie_bruit(sous_tries, returns_tries):
     """Parcourt chronologiquement les paris deja tries et retrouve
     l'index exact ou n>=SEUIL_MIN_PARIS_SORTIE_BRUIT ET la largeur d'IC
     passe sous SEUIL_LARGEUR_IC_SORTIE_BRUIT pour la premiere fois.
