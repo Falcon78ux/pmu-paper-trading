@@ -298,6 +298,19 @@ def main():
         somme_ecart_course = 0.0
         nb_partants_course = 0
         for p in participants:
+            # CORRIGE (31 aout) : bug trouve suite a l'investigation du
+            # signal D4 jamais declenche - environ 20% des PARTANTS
+            # (verifie sur donnees API reelles) ont ordreArrivee=None
+            # meme sur une course a "arrivee definitive complete"
+            # (probablement un delai de mise a jour cote PMU). L'ancien
+            # code sautait ENTIEREMENT ces chevaux via "continue" avant
+            # meme d'atteindre maj_deferrage - alors que le statut de
+            # deferrage ne depend absolument pas du rang d'arrivee.
+            # maj_deferrage est desormais appelee pour TOUS les
+            # partants, independamment de la disponibilite du rang.
+            if p.get("statut") == "PARTANT":
+                maj_deferrage(etat_deferrage, p.get("nom"), extraire_deferre_4_pieds(p))
+
             rang = p.get("ordreArrivee")
             if rang is None:
                 continue
@@ -307,8 +320,6 @@ def main():
                 maj_driver(etat_drivers, driver, gagnant)
 
             maj_dernier_rang(etat_dernier_rang, p.get("nom"), rang)
-
-            maj_deferrage(etat_deferrage, p.get("nom"), extraire_deferre_4_pieds(p))
 
             pere = table_pedigree.get(p.get("nom"))
             if pere:
