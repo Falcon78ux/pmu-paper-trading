@@ -176,11 +176,23 @@ def enregistrer_snapshot_portefeuille():
     actuel etait consultable, jamais son evolution dans le temps).
     Permettra, une fois assez de semaines accumulees, de calculer un
     vrai drawdown du portefeuille combine (comme mesure en backtest
-    lors de la recherche meta-allocation d'aout 2026)."""
+    lors de la recherche meta-allocation d'aout 2026).
+
+    ETENDU (31 aout) : enregistre aussi le niveau de CHAQUE bankroll
+    individuelle chaque semaine (suivi_bankrolls_hebdo.csv) - absent
+    jusqu'ici, necessaire pour calculer une vraie "performance recente"
+    (croissance sur les 16 dernieres semaines) par strategie, validee
+    comme meilleure methode d'allocation lors du chantier meta-
+    allocation (bootstrap double : portefeuille et par strategie,
+    100% de victoire en croissance sur 200 historiques synthetiques).
+    Prendra ~16 semaines avant d'avoir assez de recul pour un premier
+    calcul reel - demarre la collecte des maintenant."""
     total_actuel = 0.0
+    niveaux_par_strategie = {}
     for cle in MODELES:
         bankroll_actuelle, _ = get_bankroll(RACINE, cle)
         total_actuel += bankroll_actuelle
+        niveaux_par_strategie[cle] = bankroll_actuelle
 
     chemin = f"{RACINE}/suivi_portefeuille.csv"
     existe = os.path.exists(chemin)
@@ -190,6 +202,18 @@ def enregistrer_snapshot_portefeuille():
         if not existe:
             writer.writeheader()
         writer.writerow({"date_snapshot": aujourd_hui, "total_bankroll": round(total_actuel, 2), "nb_strategies": len(MODELES)})
+
+    chemin_bankrolls = f"{RACINE}/suivi_bankrolls_hebdo.csv"
+    existe_bankrolls = os.path.exists(chemin_bankrolls)
+    champs_bankrolls = ["date_snapshot"] + MODELES
+    with open(chemin_bankrolls, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=champs_bankrolls)
+        if not existe_bankrolls:
+            writer.writeheader()
+        ligne = {"date_snapshot": aujourd_hui}
+        ligne.update({cle: round(niveaux_par_strategie[cle], 2) for cle in MODELES})
+        writer.writerow(ligne)
+
     return total_actuel
 
 
