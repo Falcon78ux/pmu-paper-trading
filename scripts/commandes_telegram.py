@@ -87,6 +87,7 @@ TEXTE_AIDE = (
     "/progression — suivi de la sortie du bruit statistique (direct seul, sans backtest) et temps restant estime\n"
     "/calibration — verifie si les probabilites predites correspondent au taux de victoire reel (v1.4/v1.5/v1.8/v1.10)\n"
     "/portefeuille — vue combinee des 21 bankrolls reelles (equivalent portefeuille a poids egaux)\n"
+    "/simulation_allocation — simulation EN PARALLELE de la ponderation 'performance recente' (aucun vrai capital deplace, informatif uniquement, necessite 16 semaines d'historique)\n"
     "/bankroll — bankrolls actuelles des 16 strategies\n"
     "/bilan — bilan du jour (gain, perte, ROI, nb paris, mises)\n"
     "/bilan JJ/MM/AAAA — bilan d'une date precise\n"
@@ -345,6 +346,88 @@ def traiter_statut():
 
 
 BANKROLL_DEPART_STANDARD = 1236  # meme valeur de depart que toutes les bankrolls individuelles
+
+
+SEMAINES_MINIMUM_SIMULATION = 16
+FREQUENCE_REEQUILIBRAGE_SIMULATION = 6
+
+
+def traiter_simulation_allocation():
+    """NOUVEAU (31 aout) : simulation EN PARALLELE de la ponderation
+    "performance recente", validee comme superieure a poids egaux lors
+    du chantier meta-allocation (double bootstrap : portefeuille et
+    par strategie individuelle, 100% de victoire en croissance sur
+    200 historiques synthetiques). NE TRANSFERE JAMAIS DE VRAI CAPITAL
+    - calcule uniquement ce que cette methode AURAIT recommande, pour
+    comparer a ce qui se passe reellement (poids egaux natif du
+    systeme actuel) avant d'envisager un vrai deploiement.
+
+    Necessite SEMAINES_MINIMUM_SIMULATION semaines d'historique
+    (suivi_bankrolls_hebdo.csv, lance le 31 aout 2026) - indisponible
+    avant mi-decembre 2026 environ."""
+    chemin = f"{RACINE}/suivi_bankrolls_hebdo.csv"
+    if not os.path.exists(chemin):
+        return (
+            "📐 <b>Simulation d'allocation (performance recente)</b>\n\n"
+            "Aucun historique de bankrolls hebdomadaires disponible pour l'instant "
+            "(demarre le 31 aout 2026, necessite 16 semaines avant le premier calcul)."
+        )
+
+    with open(chemin, "r", encoding="utf-8") as f:
+        lignes = list(csv.DictReader(f))
+
+    if len(lignes) < SEMAINES_MINIMUM_SIMULATION:
+        return (
+            f"📐 <b>Simulation d'allocation (performance recente)</b>\n\n"
+            f"{len(lignes)}/{SEMAINES_MINIMUM_SIMULATION} semaines d'historique accumulees. "
+            f"Encore ~{SEMAINES_MINIMUM_SIMULATION - len(lignes)} semaines avant le premier calcul possible.\n\n"
+            f"<i>Rappel : cette simulation ne transfere jamais de vrai capital - elle calcule "
+            f"uniquement ce que la ponderation 'performance recente' (validee par bootstrap en "
+            f"recherche) aurait recommande, pour comparer au systeme reel (poids egaux natif) "
+            f"avant d'envisager un vrai deploiement.</i>"
+        )
+
+    fenetre = lignes[-SEMAINES_MINIMUM_SIMULATION:]
+    debut, fin = fenetre[0], fenetre[-1]
+
+    poids = {}
+    croissances = {}
+    for cle in MODELES:
+        try:
+            valeur_debut = float(debut.get(cle, 0) or 0)
+            valeur_fin = float(fin.get(cle, 0) or 0)
+            croissance = (valeur_fin / valeur_debut - 1) if valeur_debut > 0 else 0
+        except (ValueError, ZeroDivisionError):
+            croissance = 0
+        croissances[cle] = croissance
+        poids[cle] = max(croissance, 0.001)
+
+    somme_poids = sum(poids.values())
+    poids_normalises = {cle: v / somme_poids for cle, v in poids.items()}
+
+    total_actuel = sum(float(fin.get(cle, 0) or 0) for cle in MODELES)
+
+    msg = "📐 <b>Simulation d'allocation (performance recente)</b>\n\n"
+    msg += (
+        f"<i>Calcule sur les {SEMAINES_MINIMUM_SIMULATION} dernieres semaines - AUCUN vrai capital "
+        f"deplace, uniquement informatif. Poids que 'performance recente' recommanderait "
+        f"actuellement, compares a la realite (poids egaux natif du systeme).</i>\n\n"
+    )
+    msg += f"Portefeuille reel actuel : {total_actuel:,.0f}EUR\n\n"
+
+    poids_tries = sorted(poids_normalises.items(), key=lambda x: x[1], reverse=True)
+    msg += "Top 5 poids recommandes (vs 4.5% = poids egal reel) :\n"
+    for cle, p in poids_tries[:5]:
+        nom = NOMS_AFFICHAGE.get(cle, cle)
+        msg += f"  {nom} : {p:.1%} (croissance recente : {croissances[cle]:+.1%})\n"
+
+    msg += "\nBottom 5 :\n"
+    for cle, p in poids_tries[-5:]:
+        nom = NOMS_AFFICHAGE.get(cle, cle)
+        msg += f"  {nom} : {p:.1%} (croissance recente : {croissances[cle]:+.1%})\n"
+
+    return msg
+
 
 
 def traiter_portefeuille():
@@ -837,6 +920,8 @@ def main():
             envoyer_telegram(traiter_calibration())
         elif commande == "/portefeuille":
             envoyer_telegram(traiter_portefeuille())
+        elif commande == "/simulation_allocation":
+            envoyer_telegram(traiter_simulation_allocation())
         elif commande == "/bankroll":
             envoyer_telegram(traiter_bankroll())
         elif commande == "/bilan":
