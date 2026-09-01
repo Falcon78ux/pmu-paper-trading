@@ -34,7 +34,7 @@ import time
 # ============================================================
 # A REMPLIR : colle ta cle API EODHD ici avant de lancer
 # ============================================================
-API_TOKEN = "COLLE_TA_CLE_ICI"
+API_TOKEN = "6a970338c85127.20284664"
 # ============================================================
 
 DOSSIER = "/content/drive/MyDrive/microcap_data"  # dossier dedie, separe du projet PMU trot
