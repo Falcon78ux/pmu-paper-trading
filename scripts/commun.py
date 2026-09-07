@@ -324,6 +324,43 @@ def extraire_deferre_4_pieds(participant):
     return 1 if participant.get("deferre") == "DEFERRE_ANTERIEURS_POSTERIEURS" else 0
 
 
+def charger_table_calibration(racine):
+    """NOUVEAU (7 sept) : charge la table de calibration isotonique
+    (v14/v15/v18/v110), generee manuellement dans Colab a partir des
+    vraies donnees de production (voir GENERER_table_calibration.py).
+    Retourne {} si le fichier n'existe pas encore."""
+    chemin = f"{racine}/table_calibration_isotonique.json"
+    if not os.path.exists(chemin):
+        return {}
+    try:
+        with open(chemin, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def appliquer_calibration(table_calibration, cle_modele, proba_brute):
+    """Interpolation lineaire sur la table de calibration isotonique
+    pre-calculee. Retourne proba_brute inchangee si aucune table
+    disponible pour ce modele (fonctionne en mode degrade sans
+    scikit-learn, coherent avec l'architecture de production actuelle)."""
+    table = table_calibration.get(cle_modele)
+    if not table or not table.get("x") or not table.get("y"):
+        return proba_brute
+    xs, ys = table["x"], table["y"]
+    if proba_brute <= xs[0]:
+        return ys[0]
+    if proba_brute >= xs[-1]:
+        return ys[-1]
+    for i in range(len(xs) - 1):
+        if xs[i] <= proba_brute <= xs[i + 1]:
+            if xs[i + 1] == xs[i]:
+                return ys[i]
+            fraction = (proba_brute - xs[i]) / (xs[i + 1] - xs[i])
+            return ys[i] + fraction * (ys[i + 1] - ys[i])
+    return proba_brute
+
+
 FRACTION_KELLY = 0.10
 FRACTION_KELLY_D4 = 0.05
 MISE_MINIMUM = 1.0  # CORRIGE (21 aout) : 1EUR confirme sur l'app reelle, pas 1.50EUR
