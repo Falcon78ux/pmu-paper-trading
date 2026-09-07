@@ -207,6 +207,10 @@ def main():
     bankroll_v14dutch, chemin_bankroll_v14dutch = get_bankroll(RACINE, "v14dutch")
     bankroll_v14favori, chemin_bankroll_v14favori = get_bankroll(RACINE, "v14favori")
     bankroll_v14sire, chemin_bankroll_v14sire = get_bankroll(RACINE, "v14sire")
+    bankroll_v14recalibre, chemin_bankroll_v14recalibre = get_bankroll(RACINE, "v14recalibre")
+    bankroll_v15recalibre, chemin_bankroll_v15recalibre = get_bankroll(RACINE, "v15recalibre")
+    bankroll_v18recalibre, chemin_bankroll_v18recalibre = get_bankroll(RACINE, "v18recalibre")
+    bankroll_v110recalibre, chemin_bankroll_v110recalibre = get_bankroll(RACINE, "v110recalibre")
     bankroll_v15, chemin_bankroll_v15 = get_bankroll(RACINE, "v15")
     bankroll_v18, chemin_bankroll_v18 = get_bankroll(RACINE, "v18")
     bankroll_v110, chemin_bankroll_v110 = get_bankroll(RACINE, "v110")
@@ -775,6 +779,22 @@ def main():
                 bankroll_v14sire += gain_euros
                 bankroll_apres = bankroll_v14sire
                 cle_pause = "v14sire"
+            elif l["modele"] == "v14recalibre":
+                bankroll_v14recalibre += gain_euros
+                bankroll_apres = bankroll_v14recalibre
+                cle_pause = "v14recalibre"
+            elif l["modele"] == "v15recalibre":
+                bankroll_v15recalibre += gain_euros
+                bankroll_apres = bankroll_v15recalibre
+                cle_pause = "v15recalibre"
+            elif l["modele"] == "v18recalibre":
+                bankroll_v18recalibre += gain_euros
+                bankroll_apres = bankroll_v18recalibre
+                cle_pause = "v18recalibre"
+            elif l["modele"] == "v110recalibre":
+                bankroll_v110recalibre += gain_euros
+                bankroll_apres = bankroll_v110recalibre
+                cle_pause = "v110recalibre"
             elif l["modele"] == "v1.5":
                 bankroll_v15 += gain_euros
                 bankroll_apres = bankroll_v15
@@ -870,6 +890,10 @@ def main():
     mettre_a_jour_bankroll(chemin_bankroll_v14dutch, bankroll_v14dutch)
     mettre_a_jour_bankroll(chemin_bankroll_v14favori, bankroll_v14favori)
     mettre_a_jour_bankroll(chemin_bankroll_v14sire, bankroll_v14sire)
+    mettre_a_jour_bankroll(chemin_bankroll_v14recalibre, bankroll_v14recalibre)
+    mettre_a_jour_bankroll(chemin_bankroll_v15recalibre, bankroll_v15recalibre)
+    mettre_a_jour_bankroll(chemin_bankroll_v18recalibre, bankroll_v18recalibre)
+    mettre_a_jour_bankroll(chemin_bankroll_v110recalibre, bankroll_v110recalibre)
     mettre_a_jour_bankroll(chemin_bankroll_v15, bankroll_v15)
     mettre_a_jour_bankroll(chemin_bankroll_v18, bankroll_v18)
     mettre_a_jour_bankroll(chemin_bankroll_v110, bankroll_v110)
