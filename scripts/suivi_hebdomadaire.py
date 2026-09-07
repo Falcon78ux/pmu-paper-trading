@@ -35,6 +35,7 @@ MODELES = [
     "v14", "v14dutch", "v14favori", "v14sire",
     "v15", "v18",
     "v110", "v110dutch", "v110favori", "v110d4", "v110sniper", "v110place", "v110antifav", "v110snipercombine", "v110ecartfaible",
+    "v14recalibre", "v15recalibre", "v18recalibre", "v110recalibre",
     "consensus_place", "couple_harville",
     "place", "2sur4", "trio", "multi", "2favori",
 ]
@@ -46,6 +47,8 @@ NOMS_AFFICHAGE = {
     "v110d4": "v1.10-D4", "v110sniper": "v1.10-Sniper",
     "v110place": "v1.10-Place", "v110antifav": "v1.10-AntiFav",
     "v110snipercombine": "v1.10-SniperCombine", "v110ecartfaible": "v1.10-EcartFaible",
+    "v14recalibre": "v1.4-Recalibre", "v15recalibre": "v1.5-Recalibre",
+    "v18recalibre": "v1.8-Recalibre", "v110recalibre": "v1.10-Recalibre",
     "consensus_place": "Consensus-Place", "couple_harville": "Couple-Harville",
     "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi",
     "2favori": "2favori",
@@ -67,6 +70,13 @@ REFERENCE_BACKTEST = {
     "v110antifav": {"n": 26824, "roi": 0.2655},
     "v110snipercombine": {"n": 273, "roi": 0.3238},
     "v110ecartfaible": {"n": 1882, "roi": 0.3258},
+    # NOUVEAU (7 sept) : reference walk-forward sur DONNEES REELLES de
+    # production (pas le backtest 2.5 ans habituel) - voir
+    # commandes_telegram.py pour le detail methodologique.
+    "v14recalibre": {"n": 590, "roi": -0.0266},
+    "v15recalibre": {"n": 650, "roi": 0.0412},
+    "v18recalibre": {"n": 467, "roi": 0.0518},
+    "v110recalibre": {"n": 463, "roi": -0.0395},
     "consensus_place": {"n": 7811, "roi": 0.3738},
     "couple_harville": {"n": 16159, "roi": 0.7088},  # CORRIGE (26 aout), coherent avec commandes_telegram.py
     "place": {"n": 16635, "roi": 0.2339},  # CORRIGE (25 aout), coherent avec commandes_telegram.py
@@ -89,7 +99,7 @@ def cle_log_modele(cle):
     code dans paris_virtuels.csv (pas leur nom d'affichage) - meme
     logique que commandes_telegram.py, indispensable pour retrouver
     correctement leurs paris."""
-    if cle in ("v14dutch", "v14favori", "v14sire", "v110dutch", "v110favori", "v110d4", "v110sniper", "v110place", "v110antifav", "v110snipercombine", "v110ecartfaible", "consensus_place", "couple_harville"):
+    if cle in ("v14dutch", "v14favori", "v14sire", "v110dutch", "v110favori", "v110d4", "v110sniper", "v110place", "v110antifav", "v110snipercombine", "v110ecartfaible", "v14recalibre", "v15recalibre", "v18recalibre", "v110recalibre", "consensus_place", "couple_harville"):
         return cle
     return NOMS_AFFICHAGE[cle]
 
