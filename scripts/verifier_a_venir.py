@@ -35,6 +35,7 @@ from commun import (
     extraire_age, extraire_indicateur_femelle, extraire_taux_victoire_carriere,
     get_dernier_rang, get_sire_forme, charger_table_pedigree,
     get_bankroll, calculer_mise, calculer_mise_v18, calculer_mise_v110,
+    charger_table_calibration, appliquer_calibration,
     calculer_mise_place, calculer_mise_2favori, calculer_mise_v14sire,
     arrondir_mise_euro, MISE_MINIMUM,
     get_deferre_precedent, detecter_changement_vers_d4,
@@ -135,6 +136,11 @@ def main():
     bankroll_v14dutch, chemin_bankroll_v14dutch = get_bankroll(RACINE, "v14dutch")
     bankroll_v14favori, chemin_bankroll_v14favori = get_bankroll(RACINE, "v14favori")
     bankroll_v14sire, chemin_bankroll_v14sire = get_bankroll(RACINE, "v14sire")
+    bankroll_v14recalibre, chemin_bankroll_v14recalibre = get_bankroll(RACINE, "v14recalibre")
+    bankroll_v15recalibre, chemin_bankroll_v15recalibre = get_bankroll(RACINE, "v15recalibre")
+    bankroll_v18recalibre, chemin_bankroll_v18recalibre = get_bankroll(RACINE, "v18recalibre")
+    bankroll_v110recalibre, chemin_bankroll_v110recalibre = get_bankroll(RACINE, "v110recalibre")
+    table_calibration = charger_table_calibration(RACINE)
     bankroll_v15, chemin_bankroll_v15 = get_bankroll(RACINE, "v15")
     bankroll_v18, chemin_bankroll_v18 = get_bankroll(RACINE, "v18")
     bankroll_v110, chemin_bankroll_v110 = get_bankroll(RACINE, "v110")
@@ -193,10 +199,14 @@ def main():
         }
 
         value_bets_v14 = []
+        value_bets_v14recalibre = []
         value_bets_v14sire = []
         value_bets_v15 = []
+        value_bets_v15recalibre = []
         value_bets_v18 = []
+        value_bets_v18recalibre = []
         value_bets_v110 = []
+        value_bets_v110recalibre = []
         value_bets_v110d4 = []
         value_bets_v110sniper = []
         value_bets_v110place = []
@@ -248,6 +258,19 @@ def main():
                         if mise14 > 0:
                             value_bets_v14.append((cheval, cote, proba14, ev14, mise14))
 
+                    # NOUVEAU (7 sept) : v14recalibre - meme proba brute que
+                    # v1.4, corrigee par calibration isotonique sur donnees
+                    # reelles de production (le modele v1.4 surestime ses
+                    # propres probas, confirme par /calibration et un test
+                    # walk-forward sur donnees reelles : n=590, ROI=-2.66%
+                    # contre -4.57% pour la version non recalibree).
+                    proba14_calibree = appliquer_calibration(table_calibration, "v14", proba14)
+                    ev14_calibre = proba14_calibree * cote - 1
+                    if ev14_calibre > SEUIL_EV:
+                        mise14recalibre = calculer_mise(proba14_calibree, cote, bankroll_v14recalibre)
+                        if mise14recalibre > 0:
+                            value_bets_v14recalibre.append((cheval, cote, proba14_calibree, ev14_calibre, mise14recalibre))
+
                 pere = table_pedigree.get(cheval)
                 sire_forme = get_sire_forme(etat_sire_forme, pere)
                 if sire_forme is not None:
@@ -280,6 +303,14 @@ def main():
                         if mise15 > 0:
                             value_bets_v15.append((cheval, cote, proba15, ev15, mise15))
 
+                    # NOUVEAU (7 sept) : v15recalibre (meme logique que v14recalibre)
+                    proba15_calibree = appliquer_calibration(table_calibration, "v15", proba15)
+                    ev15_calibre = proba15_calibree * cote - 1
+                    if ev15_calibre > SEUIL_EV:
+                        mise15recalibre = calculer_mise(proba15_calibree, cote, bankroll_v15recalibre)
+                        if mise15recalibre > 0:
+                            value_bets_v15recalibre.append((cheval, cote, proba15_calibree, ev15_calibre, mise15recalibre))
+
             ecart_corde = None
             deferre_4_pieds = None
             if sf_avant is not None and driver_forme is not None and biais_hippo is not None:
@@ -300,6 +331,14 @@ def main():
                         mise18 = calculer_mise_v18(proba18, cote, bankroll_v18, deferre_4_pieds)
                         if mise18 > 0:
                             value_bets_v18.append((cheval, cote, proba18, ev18, mise18, deferre_4_pieds))
+
+                    # NOUVEAU (7 sept) : v18recalibre (meme logique)
+                    proba18_calibree = appliquer_calibration(table_calibration, "v18", proba18)
+                    ev18_calibre = proba18_calibree * cote - 1
+                    if ev18_calibre > SEUIL_EV:
+                        mise18recalibre = calculer_mise_v18(proba18_calibree, cote, bankroll_v18recalibre, deferre_4_pieds)
+                        if mise18recalibre > 0:
+                            value_bets_v18recalibre.append((cheval, cote, proba18_calibree, ev18_calibre, mise18recalibre, deferre_4_pieds))
             else:
                 diag["sans_ecart_corde"] += 1
 
@@ -326,6 +365,14 @@ def main():
                         mise110 = calculer_mise_v110(proba110, cote, bankroll_v110, deferre_4_pieds)
                         if mise110 > 0:
                             value_bets_v110.append((cheval, cote, proba110, ev110, mise110, deferre_4_pieds))
+
+                        # NOUVEAU (7 sept) : v110recalibre (meme logique)
+                        proba110_calibree = appliquer_calibration(table_calibration, "v110", proba110)
+                        ev110_calibre = proba110_calibree * cote - 1
+                        if ev110_calibre > SEUIL_EV:
+                            mise110recalibre = calculer_mise_v110(proba110_calibree, cote, bankroll_v110recalibre, deferre_4_pieds)
+                            if mise110recalibre > 0:
+                                value_bets_v110recalibre.append((cheval, cote, proba110_calibree, ev110_calibre, mise110recalibre, deferre_4_pieds))
 
                         historique_deferrage = get_deferre_precedent(etat_deferrage, cheval)
                         if detecter_changement_vers_d4(historique_deferrage, deferre_4_pieds):
@@ -598,6 +645,18 @@ def main():
                 marque_d4 = " [D4]" if d4 else ""
                 bloc += f"- {cheval}{marque_d4} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
+        if value_bets_v14recalibre and not etat_pause.get("v14recalibre", False):
+            bloc = f"<b>v1.4-Recalibre</b> ({bankroll_v14recalibre:.0f}EUR) : " + ", ".join(f"{c} ({m:.0f}EUR)" for c, _, _, _, m in value_bets_v14recalibre) + "\n"
+            sections_msg.append(bloc)
+        if value_bets_v15recalibre and not etat_pause.get("v15recalibre", False):
+            bloc = f"<b>v1.5-Recalibre</b> ({bankroll_v15recalibre:.0f}EUR) : " + ", ".join(f"{c} ({m:.0f}EUR)" for c, _, _, _, m in value_bets_v15recalibre) + "\n"
+            sections_msg.append(bloc)
+        if value_bets_v18recalibre and not etat_pause.get("v18recalibre", False):
+            bloc = f"<b>v1.8-Recalibre</b> ({bankroll_v18recalibre:.0f}EUR) : " + ", ".join(f"{c} ({m:.0f}EUR)" for c, _, _, _, m, _ in value_bets_v18recalibre) + "\n"
+            sections_msg.append(bloc)
+        if value_bets_v110recalibre and not etat_pause.get("v110recalibre", False):
+            bloc = f"<b>v1.10-Recalibre</b> ({bankroll_v110recalibre:.0f}EUR) : " + ", ".join(f"{c} ({m:.0f}EUR)" for c, _, _, _, m, _ in value_bets_v110recalibre) + "\n"
+            sections_msg.append(bloc)
         if dutch_v110_liste and not etat_pause.get("v110dutch", False):
             bloc = f"<b>Modele v1.10-DUTCH</b> (bankroll : {bankroll_v110dutch:.0f}EUR, {len(dutch_v110_liste)} opportunite(s)) :\n"
             for d in dutch_v110_liste:
@@ -685,6 +744,14 @@ def main():
             log_paris.append({"race_id": race_id, "modele": "v1.5", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
         for cheval, cote, proba, ev, mise, d4 in value_bets_v18:
             log_paris.append({"race_id": race_id, "modele": "v1.8", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+        for cheval, cote, proba, ev, mise in value_bets_v14recalibre:
+            log_paris.append({"race_id": race_id, "modele": "v14recalibre", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+        for cheval, cote, proba, ev, mise in value_bets_v15recalibre:
+            log_paris.append({"race_id": race_id, "modele": "v15recalibre", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+        for cheval, cote, proba, ev, mise, d4 in value_bets_v18recalibre:
+            log_paris.append({"race_id": race_id, "modele": "v18recalibre", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+        for cheval, cote, proba, ev, mise, d4 in value_bets_v110recalibre:
+            log_paris.append({"race_id": race_id, "modele": "v110recalibre", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
         for cheval, cote, proba, ev, mise, d4 in value_bets_v110:
             log_paris.append({"race_id": race_id, "modele": "v1.10", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
         for d in dutch_v110_liste:
