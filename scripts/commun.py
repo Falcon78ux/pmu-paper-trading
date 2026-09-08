@@ -339,13 +339,21 @@ def charger_table_calibration(racine):
         return {}
 
 
+SEUIL_ERREUR_CALIBRATION = 0.04  # NOUVEAU (8 sept) : le recalibrage ne s'applique QUE si l'erreur mesuree depasse 4% - valide par double test le 8 septembre (jamais declenche a tort sur un modele frais/bien calibre en backtest walk-forward sur 1 an, 0/7 cycles ; declenche correctement sur le modele fige actuel en production reelle, 11/12 cycles, seul v1.4 sous le seuil a 3.8% lors du tout premier cycle)
+
+
 def appliquer_calibration(table_calibration, cle_modele, proba_brute):
     """Interpolation lineaire sur la table de calibration isotonique
-    pre-calculee. Retourne proba_brute inchangee si aucune table
+    pre-calculee, APPLIQUEE UNIQUEMENT SI l'erreur de calibration
+    mesuree (stockee dans la table, voir GENERER_table_calibration.py)
+    depasse SEUIL_ERREUR_CALIBRATION - sinon retourne proba_brute
+    inchangee. Retourne aussi proba_brute inchangee si aucune table
     disponible pour ce modele (fonctionne en mode degrade sans
     scikit-learn, coherent avec l'architecture de production actuelle)."""
     table = table_calibration.get(cle_modele)
     if not table or not table.get("x") or not table.get("y"):
+        return proba_brute
+    if table.get("erreur_calibration", 0) <= SEUIL_ERREUR_CALIBRATION:
         return proba_brute
     xs, ys = table["x"], table["y"]
     if proba_brute <= xs[0]:
