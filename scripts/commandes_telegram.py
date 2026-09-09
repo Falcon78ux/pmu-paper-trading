@@ -8,6 +8,16 @@ trio, multi, 2favori.
 NOUVEAU (21 aout, soir) : /bilan affiche desormais la mise totale
 engagee par strategie, et le cumul global des mises dans la ligne
 Total.
+NOUVEAU (9 sept) : /statut affiche desormais, pour les 4 strategies
+recalibrees (v14/v15/v18/v110-Recalibre), un IC95% supplementaire
+calcule sur l'echantillon COMBINE avec leur modele "brut" parent
+(sans double compte) - valide comme "levier 3" pour resserrer l'IC
+lors d'une session de recherche le 9 septembre (v1.10-Recalibre s'est
+revele etre un sous-ensemble a 100% de v1.10 brut, combiner les deux
+resserre l'IC de 55% a 30.5% de largeur). Affiche EN PLUS du suivi
+individuel existant, ne le remplace pas - le ROI combine mesure la
+performance du signal SOUS-JACENT (v1.10 dans son ensemble), pas
+l'effet specifique du filtre de recalibrage.
 =============================================================================
 """
 
@@ -55,6 +65,15 @@ MODELES_AVEC_CLV = [
     "consensus_place",
     "2favori",
 ]
+
+# NOUVEAU (9 sept) : mapping strategie recalibree -> modele brut parent
+# (pour la vue combinee "levier 3" dans /statut)
+RECALIBRE_VERS_BRUT = {
+    "v14recalibre": "v14",
+    "v15recalibre": "v15",
+    "v18recalibre": "v18",
+    "v110recalibre": "v110",
+}
 
 REFERENCE_BACKTEST = {
     "v14": {"n": 30984, "roi": 0.1075},
@@ -284,6 +303,78 @@ def traiter_confiance():
     return msg
 
 
+def calculer_ic95_returns(returns, n_bt, roi_bt, roi_combine):
+    """Utilitaire partage : calcule l'IC95% autour du ROI combine a
+    partir de la liste de returns directs. Retourne (ic_bas, ic_haut)
+    ou (None, None) si pas assez de donnees."""
+    if len(returns) <= 1:
+        return None, None
+    ecart_type = statistics.stdev(returns)
+    erreur_type = ecart_type / ((n_bt + len(returns)) ** 0.5)
+    ic_bas = roi_combine - 1.96 * erreur_type
+    ic_haut = roi_combine + 1.96 * erreur_type
+    return ic_bas, ic_haut
+
+
+def calculer_vue_combinee_recalibre(cle, lignes_csv):
+    """NOUVEAU (9 sept) : pour une strategie recalibree, calcule l'IC95%
+    sur l'echantillon COMBINE avec son modele brut parent (union des
+    paris par race_id+cheval, sans double compte) - "levier 3" valide
+    en recherche le 9 septembre. Retourne None si la strategie n'a pas
+    de modele brut parent (pas dans RECALIBRE_VERS_BRUT) ou si aucune
+    donnee combinee n'est disponible."""
+    cle_brut = RECALIBRE_VERS_BRUT.get(cle)
+    if not cle_brut:
+        return None
+
+    nom_log_recalibre = cle_log_modele(cle)
+    nom_log_brut = cle_log_modele(cle_brut)
+
+    lignes_recalibre = [l for l in lignes_csv if l.get("modele") == nom_log_recalibre and l.get("resultat", "") != ""]
+    lignes_brut = [l for l in lignes_csv if l.get("modele") == nom_log_brut and l.get("resultat", "") != ""]
+
+    if not lignes_recalibre and not lignes_brut:
+        return None
+
+    cles_vues = set()
+    lignes_combinees = []
+    for l in lignes_recalibre + lignes_brut:
+        cle_pari = (l.get("race_id"), l.get("cheval"))
+        if cle_pari not in cles_vues:
+            cles_vues.add(cle_pari)
+            lignes_combinees.append(l)
+
+    n_combine = len(lignes_combinees)
+    if n_combine == 0:
+        return None
+
+    mise_totale = sum(float(l.get("mise", 0) or 0) for l in lignes_combinees)
+    gain_total = sum(float(l.get("gain_euros", 0) or 0) for l in lignes_combinees)
+    roi_direct_combine = gain_total / mise_totale if mise_totale > 0 else 0
+
+    ref_brut = REFERENCE_BACKTEST[cle_brut]
+    n_bt, roi_bt = ref_brut["n"], ref_brut["roi"]
+    roi_combine_avec_bt = (n_bt * roi_bt + n_combine * roi_direct_combine) / (n_bt + n_combine)
+
+    returns = []
+    for l in lignes_combinees:
+        mise = float(l.get("mise", 0) or 0)
+        gain = float(l.get("gain_euros", 0) or 0)
+        if mise > 0:
+            returns.append(gain / mise)
+
+    ic_bas, ic_haut = calculer_ic95_returns(returns, n_bt, roi_bt, roi_combine_avec_bt)
+
+    return {
+        "n": n_combine,
+        "roi_direct": roi_direct_combine,
+        "roi_combine": roi_combine_avec_bt,
+        "ic_bas": ic_bas,
+        "ic_haut": ic_haut,
+        "nom_brut": NOMS_AFFICHAGE[cle_brut],
+    }
+
+
 def traiter_statut():
     chemin_log = f"{RACINE}/paris_virtuels.csv"
     lignes_csv = []
@@ -305,6 +396,22 @@ def traiter_statut():
 
         if n_direct < SEUIL_MIN_PARIS_STATUT:
             msg += f"⚪ <b>{nom}</b> (n={n_direct})\nEchantillon trop petit pour conclure (seuil : {SEUIL_MIN_PARIS_STATUT})\n\n"
+            # NOUVEAU (9 sept) : meme sous le seuil individuel, la vue
+            # combinee (levier 3) peut deja donner un signal exploitable
+            # pour les 4 strategies recalibrees - affichee quand meme.
+            if cle in RECALIBRE_VERS_BRUT:
+                vue_combinee = calculer_vue_combinee_recalibre(cle, lignes_csv)
+                if vue_combinee and vue_combinee["n"] >= SEUIL_MIN_PARIS_STATUT:
+                    ic_txt = (
+                        f"[{vue_combinee['ic_bas']:+.1%},{vue_combinee['ic_haut']:+.1%}]"
+                        if vue_combinee["ic_bas"] is not None else ""
+                    )
+                    msg += (
+                        f"   📎 <i>Vue combinee avec {vue_combinee['nom_brut']} (levier 3, sans double compte) : "
+                        f"n={vue_combinee['n']}, ROI direct={vue_combinee['roi_direct']:+.1%}, "
+                        f"combine backtest={vue_combinee['roi_combine']:+.1%} {ic_txt}. "
+                        f"Mesure le signal sous-jacent, pas l'effet du recalibrage seul.</i>\n\n"
+                    )
             continue
 
         roi_direct = stats_direct["roi"]
@@ -353,8 +460,27 @@ def traiter_statut():
         msg += (
             f"{emoji} <b>{nom}</b> (n={n_direct})\n"
             f"{statut_ic} : {roi_bt:+.1%} {ic_texte}\n"
-            f"CLV : {clv_texte}\n\n"
+            f"CLV : {clv_texte}\n"
         )
+
+        # NOUVEAU (9 sept) : vue combinee "levier 3" en supplement, pour
+        # les 4 strategies recalibrees uniquement - n'affecte jamais le
+        # suivi individuel ci-dessus, purement informatif.
+        if cle in RECALIBRE_VERS_BRUT:
+            vue_combinee = calculer_vue_combinee_recalibre(cle, lignes_csv)
+            if vue_combinee:
+                ic_txt = (
+                    f"[{vue_combinee['ic_bas']:+.1%},{vue_combinee['ic_haut']:+.1%}]"
+                    if vue_combinee["ic_bas"] is not None else ""
+                )
+                msg += (
+                    f"📎 <i>Vue combinee avec {vue_combinee['nom_brut']} (levier 3, sans double compte) : "
+                    f"n={vue_combinee['n']}, ROI direct={vue_combinee['roi_direct']:+.1%}, "
+                    f"combine backtest={vue_combinee['roi_combine']:+.1%} {ic_txt}. "
+                    f"Mesure le signal sous-jacent, pas l'effet du recalibrage seul.</i>\n"
+                )
+
+        msg += "\n"
 
     return msg
 
