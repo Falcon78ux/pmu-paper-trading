@@ -110,6 +110,20 @@ REFERENCE_BACKTEST = {
     "2favori": {"n": 3171, "roi": 0.3514},  # CORRIGE (25 aout) : reconstruction complete du modele (jamais retestee depuis le deploiement initial) donne un resultat different de l'ancienne reference (n=2645, roi=0.2501)
 }
 
+CONFIRMATION_ACCELEREE = {
+    # NOUVEAU (9 sept) : strategies confirmees via walk-forward backtest
+    # COMPLET (reentrainement tous les 60 jours, pas juste un split
+    # simple) sur un modele FRAICHEMENT REENTRAINE - contrairement a la
+    # confirmation acceleree utilisee en debut de projet (basee sur
+    # l'ancien backtest, potentiellement perime pour un modele fige
+    # depuis des mois), celle-ci est jugee fiable car le modele vient
+    # d'etre reentraine et n'a pas encore eu le temps de deriver.
+    # Format : {cle: date ISO a partir de laquelle le suivi "depuis
+    # confirmation" demarre - typiquement la date de deploiement du
+    # nouveau modele}.
+    "v15": "2026-09-09T00:00:00+00:00",  # walk-forward n=27181, IC95%=[+9.76%,+15.55%], modele v1.5 reentraine sur 137654 lignes le 9 sept
+}
+
 SEUIL_MIN_PARIS_STATUT = 50
 SEUIL_MIN_PARIS_SORTIE_BRUIT = 300
 SEUIL_LARGEUR_IC_SORTIE_BRUIT = 0.40  # CORRIGE (23 aout) : 15% etait base sur une approximation binomiale erronee (supposait un ecart-type ~0.4-0.5 comme un gagne/perdu simple). La vraie variance des RETOURS financiers (qui integrent l'ampleur des gains selon la cote) mesuree sur v1.10/v1.10-Favori/Couple-Harville est bien plus elevee (ecart-type 2 a 6 selon la strategie) - un seuil de 15% aurait necessite jusqu'a 22911 paris (plus de 3 ans a notre rythme) pour Couple-Harville. 40% reste atteignable en quelques semaines a quelques mois selon la strategie, tout en representant un vrai resserrement par rapport au chaos initial.
@@ -830,6 +844,38 @@ def traiter_progression():
                 gain = float(l.get("gain_euros", 0) or 0)
                 if mise > 0:
                     returns_tries.append(gain / mise)
+
+        # NOUVEAU (9 sept) : confirmation acceleree via walk-forward
+        # backtest complet sur modele fraichement reentraine -
+        # prioritaire sur le calcul direct-seul habituel, court-circuite
+        # le reste de la boucle pour cette strategie.
+        if cle in CONFIRMATION_ACCELEREE:
+            msg += f"✅ <b>{nom}</b> — SORTI DU BRUIT (confirmation acceleree, walk-forward backtest)\n"
+            msg += f"n direct={n}, ROI direct (total)={roi_direct:+.1%}\n"
+            msg += alerte_derive
+
+            date_confirmation = CONFIRMATION_ACCELEREE[cle]
+            if cle not in dates_sortie_bruit:
+                dates_sortie_bruit[cle] = date_confirmation
+                fichier_modifie = True
+
+            date_sortie_str = dates_sortie_bruit.get(cle)
+            sous_post = [l for l in sous if l.get("date_detection", "") > date_sortie_str]
+            if sous_post:
+                n_post = len(sous_post)
+                returns_post = []
+                for l in sous_post:
+                    mise = float(l.get("mise", 0) or 0)
+                    gain = float(l.get("gain_euros", 0) or 0)
+                    if mise > 0:
+                        returns_post.append(gain / mise)
+                roi_post = sum(returns_post) / len(returns_post) if returns_post else 0
+                msg += f"📍 <b>Depuis la confirmation acceleree ({date_confirmation[:10]})</b> : n={n_post}, ROI={roi_post:+.1%}\n"
+            else:
+                msg += f"📍 <b>Depuis la confirmation acceleree ({date_confirmation[:10]})</b> : n=0 (aucun nouveau pari resolu depuis)\n"
+
+            msg += "\n"
+            continue
 
         largeur_ic = None
         if len(returns) > 1:
