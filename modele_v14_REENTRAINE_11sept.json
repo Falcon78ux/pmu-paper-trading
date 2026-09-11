@@ -1,0 +1,29 @@
+{
+  "coefficients": {
+    "const": 0.7956872918062586,
+    "speed_figure_avant_course_std": 0.048404754917586355,
+    "log_cote_std": -1.272428512638914,
+    "driver_forme_std": 0.07045931627224189
+  },
+  "normalisation": {
+    "speed_figure_avant_course": {
+      "moyenne": -132.7590260014471,
+      "ecart_type": 802.4401190031836
+    },
+    "log_cote": {
+      "moyenne": 2.9051860810658034,
+      "ecart_type": 1.1664775578039912
+    },
+    "driver_forme": {
+      "moyenne": 0.08513776081703417,
+      "ecart_type": 0.061539541516185126
+    }
+  },
+  "variables_brutes": [
+    "speed_figure_avant_course",
+    "log_cote",
+    "driver_forme"
+  ],
+  "nb_lignes_entrainement": 123929,
+  "date_export": "2026-09-11"
+}

@@ -1,0 +1,48 @@
+{
+  "coefficients": {
+    "const": 0.7256972440942301,
+    "sf_std": 0.060894018517628025,
+    "log_cote": -1.2570304129385752,
+    "driver_std": 0.08294898531298452,
+    "hippo_std": 0.05434077599206676,
+    "interaction_sf_driver": -0.014178425413080726,
+    "nb_partants_std": -0.03446471090146677,
+    "ecart_corde_std": 0.015423117931395931,
+    "deferre_4_pieds": 0.09864511303661377,
+    "age_std": -0.09589493146821404,
+    "indicateur_femelle": -0.0596136904719948,
+    "taux_victoire_std": 0.00764956509695244
+  },
+  "moyennes_ecarts_types": {
+    "speed_figure_avant_course": {
+      "moyenne": -132.7590260014471,
+      "ecart_type": 802.4401190031836
+    },
+    "driver_forme": {
+      "moyenne": 0.08513776081703417,
+      "ecart_type": 0.061539541516185126
+    },
+    "biais_hippodrome": {
+      "moyenne": 0.0038817344802350756,
+      "ecart_type": 0.004619352060148607
+    },
+    "nb_partants_course": {
+      "moyenne": 11.870006213234998,
+      "ecart_type": 6.752437235926575
+    },
+    "ecart_corde": {
+      "moyenne": 17.50310863478282,
+      "ecart_type": 409.4941700770891
+    },
+    "age": {
+      "moyenne": 5.516061615925247,
+      "ecart_type": 1.8601712903140961
+    },
+    "taux_victoire_carriere": {
+      "moyenne": 0.11714017229883626,
+      "ecart_type": 0.11764437253076453
+    }
+  },
+  "nb_lignes_entrainement": 123929,
+  "date_export": "2026-09-11"
+}
