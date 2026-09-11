@@ -10,6 +10,15 @@ les fonctions de calcul de mise Kelly arrondissent desormais a l'euro
 le plus proche et rejettent le pari si le resultat est inferieur a
 1EUR. AVERTISSEMENT : tous les backtests anterieurs a cette correction
 supposaient des mises decimales continues - a re-verifier.
+
+CORRIGE (11 sept) : envoyer_telegram() decoupe desormais
+automatiquement les messages trop longs (limite Telegram : 4096
+caracteres). Bug decouvert via /progression, qui echouait
+SILENCIEUSEMENT (aucune erreur visible cote utilisateur, seulement
+visible dans les logs GitHub Actions : "Bad Request: message is too
+long") a mesure que le nombre de strategies a grandi (26 desormais).
+Cette correction protege TOUTES les commandes actuelles et futures,
+pas seulement /progression.
 =============================================================================
 """
 
@@ -31,6 +40,35 @@ def sauvegarder_json(chemin, data):
         json.dump(data, f, ensure_ascii=False)
 
 
+LIMITE_TELEGRAM = 4000  # marge de securite sous la vraie limite de 4096 caracteres
+
+
+def decouper_message(message, limite=LIMITE_TELEGRAM):
+    """NOUVEAU (11 sept) : decoupe un message trop long en plusieurs
+    morceaux envoyables separement. Decoupe prioritairement sur les
+    doubles retours a la ligne (separation naturelle entre blocs de
+    strategies dans nos messages), pour ne jamais couper au milieu
+    d'un bloc HTML ou d'une phrase si possible. Si un seul bloc depasse
+    deja la limite a lui seul, le decoupe brutalement en dernier
+    recours."""
+    if len(message) <= limite:
+        return [message]
+
+    morceaux = []
+    reste = message
+    while len(reste) > limite:
+        point_coupure = reste.rfind("\n\n", 0, limite)
+        if point_coupure == -1:
+            point_coupure = reste.rfind("\n", 0, limite)
+        if point_coupure == -1 or point_coupure < limite // 2:
+            point_coupure = limite
+        morceaux.append(reste[:point_coupure])
+        reste = reste[point_coupure:].lstrip("\n")
+    if reste:
+        morceaux.append(reste)
+    return morceaux
+
+
 def envoyer_telegram(message):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
@@ -39,13 +77,21 @@ def envoyer_telegram(message):
         print("ATTENTION : TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID manquant, message non envoye.")
         print(message)
         return
+
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    try:
-        r = requests.post(url, data={"chat_id": chat_id, "text": message, "parse_mode": "HTML"}, timeout=15)
-        if r.status_code != 200:
-            print(f"Erreur envoi Telegram ({r.status_code}) : {r.text}")
-    except Exception as e:
-        print(f"Exception envoi Telegram : {e}")
+    morceaux = decouper_message(message)
+    nb_morceaux = len(morceaux)
+
+    for i, morceau in enumerate(morceaux):
+        texte_envoye = morceau
+        if nb_morceaux > 1:
+            texte_envoye = f"[{i+1}/{nb_morceaux}]\n{morceau}"
+        try:
+            r = requests.post(url, data={"chat_id": chat_id, "text": texte_envoye, "parse_mode": "HTML"}, timeout=15)
+            if r.status_code != 200:
+                print(f"Erreur envoi Telegram ({r.status_code}) : {r.text}")
+        except Exception as e:
+            print(f"Exception envoi Telegram : {e}")
 
 
 def sigmoid(x):
