@@ -1,0 +1,43 @@
+name: Reentrainement automatique du modele
+
+on:
+  schedule:
+    - cron: "0 4 1,15 * *"  # 1er et 15 de chaque mois, ~4h UTC - approximation de "toutes les 2 semaines" (cron ne supporte pas directement cet interval)
+  workflow_dispatch: {}  # permet un declenchement manuel pour tester avant de faire confiance au planning automatique
+
+jobs:
+  reentrainer:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Recuperer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Installer les dependances
+        run: |
+          pip install -r requirements.txt
+          pip install pandas numpy statsmodels google-auth google-api-python-client
+
+      - name: Lancer le reentrainement automatique
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          DRIVE_FOLDER_ID_PMU_DATA: ${{ secrets.DRIVE_FOLDER_ID_PMU_DATA }}
+        run: python scripts/reentrainement_automatique.py
+
+      - name: Sauvegarder les modeles reentraines (si deployes)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add modele_v14_production.json modele_v18_production.json modele_v110_production.json 2>/dev/null
+          git diff --quiet --cached || git commit -m "Reentrainement automatique (${{ github.run_id }})"
+          git pull --rebase --autostash -X theirs origin main
+          git push
