@@ -1,43 +1,293 @@
-name: Reentrainement automatique du modele
+"""
+=============================================================================
+REENTRAINEMENT_AUTOMATIQUE.PY - tourne dans GitHub Actions toutes les
+2 semaines (voir .github/workflows/reentrainement_automatique.yml)
+=============================================================================
+Charge les donnees historiques depuis Google Drive (compte de service,
+pas l'authentification interactive Colab), reentraine v1.4/v1.5/v1.8/
+v1.10, VERIFIE LA COHERENCE DES SIGNES avec le modele actuellement en
+production avant de deployer quoi que ce soit. Si un coefficient
+important change de signe de facon suspecte, N'ECRASE PAS le modele
+en production - envoie une alerte Telegram et s'arrete la, pour
+validation manuelle.
 
-on:
-  schedule:
-    - cron: "0 4 1,15 * *"  # 1er et 15 de chaque mois, ~4h UTC - approximation de "toutes les 2 semaines" (cron ne supporte pas directement cet interval)
-  workflow_dispatch: {}  # permet un declenchement manuel pour tester avant de faire confiance au planning automatique
+Coherent avec la decouverte du 11 septembre 2026 : le modele etait
+reste fige 2 mois sans que personne ne s'en aperçoive, causant une
+derive progressive de calibration (mesuree via la cote moyenne
+pariee, qui grimpait chaque semaine). Ce script existe pour que ca
+n'arrive plus jamais.
+=============================================================================
+"""
 
-jobs:
-  reentrainer:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+import os
+import sys
+import json
+import io
+import numpy as np
+import pandas as pd
+import statsmodels.api as sm
+from datetime import datetime, timezone
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload
 
-    steps:
-      - name: Recuperer le code
-        uses: actions/checkout@v4
+sys.path.insert(0, os.path.dirname(__file__))
+from commun import envoyer_telegram
 
-      - name: Installer Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+RACINE = os.path.join(os.path.dirname(__file__), "..")
 
-      - name: Installer les dependances
-        run: |
-          pip install -r requirements.txt
-          pip install pandas numpy statsmodels google-auth google-api-python-client
+# ID du dossier pmu_data sur Google Drive - visible dans l'URL du
+# dossier (https://drive.google.com/drive/folders/CET_ID_ICI)
+ID_DOSSIER_DRIVE = os.environ.get("DRIVE_FOLDER_ID_PMU_DATA")
 
-      - name: Lancer le reentrainement automatique
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-          DRIVE_FOLDER_ID_PMU_DATA: ${{ secrets.DRIVE_FOLDER_ID_PMU_DATA }}
-        run: python scripts/reentrainement_automatique.py
+FICHIERS_A_TELECHARGER = ["speed_figures_trot.csv", "entries_v2.csv", "races_v2.csv"]
 
-      - name: Sauvegarder les modeles reentraines (si deployes)
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add modele_v14_production.json modele_v18_production.json modele_v110_production.json 2>/dev/null
-          git diff --quiet --cached || git commit -m "Reentrainement automatique (${{ github.run_id }})"
-          git pull --rebase --autostash -X theirs origin main
-          git push
+SEUIL_ALERTE_CHANGEMENT_SIGNE = 0.02  # en dessous de cette magnitude, un changement de signe est considere comme du bruit (coefficient proche de zero), pas une vraie alerte
+
+
+def authentifier_drive():
+    """Authentification via compte de service (pas d'interaction
+    utilisateur possible dans GitHub Actions, contrairement a Colab)."""
+    cle_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if not cle_json:
+        raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON manquant dans les secrets GitHub.")
+    infos_credentials = json.loads(cle_json)
+    credentials = service_account.Credentials.from_service_account_info(
+        infos_credentials, scopes=["https://www.googleapis.com/auth/drive.readonly"]
+    )
+    return build("drive", "v3", credentials=credentials)
+
+
+def telecharger_fichier_drive(service, nom_fichier, id_dossier, chemin_destination):
+    """Cherche un fichier par nom dans le dossier Drive donne, le
+    telecharge vers chemin_destination."""
+    requete = service.files().list(
+        q=f"'{id_dossier}' in parents and name='{nom_fichier}' and trashed=false",
+        fields="files(id, name)",
+    ).execute()
+    fichiers = requete.get("files", [])
+    if not fichiers:
+        raise RuntimeError(f"Fichier '{nom_fichier}' introuvable dans le dossier Drive {id_dossier}.")
+    id_fichier = fichiers[0]["id"]
+
+    requete_media = service.files().get_media(fileId=id_fichier)
+    with io.FileIO(chemin_destination, "wb") as f:
+        downloader = MediaIoBaseDownload(f, requete_media)
+        termine = False
+        while not termine:
+            statut, termine = downloader.next_chunk()
+    print(f"  Telecharge : {nom_fichier} -> {chemin_destination}")
+
+
+def preparer_donnees(dossier_temp):
+    sf = pd.read_csv(f"{dossier_temp}/speed_figures_trot.csv", dtype={"date": str, "num_reunion": str, "num_course": str, "num_pmu": "Int64"})
+    entries_v2 = pd.read_csv(f"{dossier_temp}/entries_v2.csv", dtype={"date": str, "num_reunion": str, "num_course": str, "num_pmu": "Int64"})
+    races_v2 = pd.read_csv(f"{dossier_temp}/races_v2.csv", dtype={"date": str, "num_reunion": str, "num_course": str})
+
+    entries_v2["deferre_4_pieds"] = (entries_v2["deferre"] == "DEFERRE_ANTERIEURS_POSTERIEURS").astype(int)
+    entries_v2["indicateur_femelle"] = (entries_v2["sexe"] == "FEMELLES").astype(int)
+    entries_v2["taux_victoire_carriere"] = np.where(
+        entries_v2["nombre_courses_carriere"] > 0,
+        entries_v2["nombre_victoires_carriere"] / entries_v2["nombre_courses_carriere"],
+        np.nan,
+    )
+    sf = sf.merge(races_v2[["date", "num_reunion", "num_course", "corde"]], on=["date", "num_reunion", "num_course"], how="left")
+
+    drivers = entries_v2[["date", "num_reunion", "num_course", "num_pmu", "driver_jockey", "rang_arrivee"]].copy()
+    drivers["date_dt"] = pd.to_datetime(drivers["date"], format="%d%m%Y", errors="coerce")
+    drivers = drivers.dropna(subset=["driver_jockey", "date_dt"])
+    drivers["victoire"] = (drivers["rang_arrivee"] == 1).astype(float)
+    drivers = drivers.sort_values(["driver_jockey", "date_dt"]).reset_index(drop=True)
+    drivers["driver_forme"] = drivers.groupby("driver_jockey")["victoire"].transform(lambda s: s.shift(1).rolling(100, min_periods=20).mean())
+
+    sf = sf.merge(entries_v2[["date", "num_reunion", "num_course", "num_pmu", "rang_arrivee", "cote_directe", "deferre_4_pieds", "age", "indicateur_femelle", "taux_victoire_carriere"]], on=["date", "num_reunion", "num_course", "num_pmu"], how="left")
+    sf["date_dt"] = pd.to_datetime(sf["date"], format="%d%m%Y", errors="coerce")
+    sf = sf.sort_values(["nom_cheval", "date_dt"]).reset_index(drop=True)
+    sf["speed_figure_avant_course"] = sf.groupby("nom_cheval")["speed_figure_brut"].transform(lambda s: s.shift(1).rolling(3, min_periods=1).mean())
+
+    sf = sf.sort_values(["nom_cheval", "corde", "date_dt"]).reset_index(drop=True)
+    sf["sf_corde_specifique"] = sf.groupby(["nom_cheval", "corde"])["speed_figure_brut"].transform(lambda s: s.shift(1).rolling(5, min_periods=2).mean())
+    sf["ecart_corde"] = (sf["sf_corde_specifique"] - sf["speed_figure_avant_course"]).fillna(0)
+
+    sf = sf.sort_values("date_dt").reset_index(drop=True)
+    sf = sf.merge(drivers[["date", "num_reunion", "num_course", "num_pmu", "driver_forme"]], on=["date", "num_reunion", "num_course", "num_pmu"], how="left")
+    sf["race_id"] = sf["date"] + "_" + sf["num_reunion"] + "_" + sf["num_course"]
+    sf["nb_partants_course"] = sf.groupby("race_id")["num_pmu"].transform("count").astype("int64")
+
+    sf_hippo = sf.dropna(subset=["cote_directe", "rang_arrivee", "hippodrome"]).copy()
+    sf_hippo["gagnant_tmp"] = (sf_hippo["rang_arrivee"] == 1).astype(float)
+    sf_hippo["ecart_marche"] = sf_hippo["gagnant_tmp"] - (1 / sf_hippo["cote_directe"])
+    courses_uniques = sf_hippo[["hippodrome", "date_dt", "num_course", "race_id"]].drop_duplicates(subset=["race_id"])
+    courses_uniques["num_course_num"] = pd.to_numeric(courses_uniques["num_course"], errors="coerce")
+    courses_uniques = courses_uniques.sort_values(["hippodrome", "date_dt", "num_course_num"])
+    courses_uniques["ordre_course_hippo"] = courses_uniques.groupby("hippodrome").cumcount()
+    agg_course = sf_hippo.groupby("race_id").agg(hippodrome=("hippodrome", "first"), somme_ecart=("ecart_marche", "sum"), nb_partants=("ecart_marche", "count")).reset_index()
+    agg_course = agg_course.merge(courses_uniques[["race_id", "ordre_course_hippo"]], on="race_id", how="left")
+    agg_course = agg_course.sort_values(["hippodrome", "ordre_course_hippo"])
+    agg_course["somme_glissante"] = agg_course.groupby("hippodrome")["somme_ecart"].transform(lambda s: s.shift(1).rolling(200, min_periods=10).sum())
+    agg_course["nb_glissant"] = agg_course.groupby("hippodrome")["nb_partants"].transform(lambda s: s.shift(1).rolling(200, min_periods=10).sum())
+    agg_course["biais_hippodrome"] = agg_course["somme_glissante"] / agg_course["nb_glissant"]
+    sf = sf.merge(agg_course[["race_id", "biais_hippodrome"]], on="race_id", how="left")
+
+    df = sf.dropna(subset=["speed_figure_avant_course", "cote_directe", "rang_arrivee", "driver_forme", "biais_hippodrome", "nb_partants_course", "ecart_corde", "deferre_4_pieds", "age", "indicateur_femelle", "taux_victoire_carriere", "date_dt"]).copy()
+    df = df[df["cote_directe"] > 1]
+    df["gagnant"] = (df["rang_arrivee"] == 1).astype(int)
+    df["log_cote"] = np.log(df["cote_directe"])
+    df = df.sort_values("date_dt").reset_index(drop=True)
+
+    vars_a_standardiser = ["speed_figure_avant_course", "driver_forme", "biais_hippodrome", "nb_partants_course", "ecart_corde", "age", "taux_victoire_carriere"]
+    normalisation = {}
+    for col in vars_a_standardiser:
+        m, s = df[col].mean(), df[col].std()
+        normalisation[col] = (m, s)
+        df[f"{col}_std"] = (df[col] - m) / s
+
+    df["sf_std"] = df["speed_figure_avant_course_std"]
+    df["hippo_std"] = df["biais_hippodrome_std"]
+    df["nb_partants_std"] = df["nb_partants_course_std"]
+    df["driver_std"] = df["driver_forme_std"]
+    df["taux_victoire_std"] = df["taux_victoire_carriere_std"]
+    df["interaction_sf_driver"] = df["sf_std"] * df["driver_std"]
+
+    return df, normalisation
+
+
+def entrainer_v14(df, normalisation):
+    X = sm.add_constant(df[["sf_std", "log_cote", "driver_std"]]).astype(float)
+    modele = sm.Logit(df["gagnant"].astype(float), X).fit(disp=0)
+    return {
+        "coefficients": {
+            "const": float(modele.params["const"]),
+            "speed_figure_avant_course_std": float(modele.params["sf_std"]),
+            "log_cote_std": float(modele.params["log_cote"]),
+            "driver_forme_std": float(modele.params["driver_std"]),
+        },
+        "normalisation": {
+            "speed_figure_avant_course": {"moyenne": float(normalisation["speed_figure_avant_course"][0]), "ecart_type": float(normalisation["speed_figure_avant_course"][1])},
+            "log_cote": {"moyenne": float(df["log_cote"].mean()), "ecart_type": float(df["log_cote"].std())},
+            "driver_forme": {"moyenne": float(normalisation["driver_forme"][0]), "ecart_type": float(normalisation["driver_forme"][1])},
+        },
+        "variables_brutes": ["speed_figure_avant_course", "log_cote", "driver_forme"],
+        "nb_lignes_entrainement": len(df),
+        "date_export": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+    }
+
+
+def entrainer_v18(df, normalisation):
+    vars_v18 = ["sf_std", "log_cote", "driver_std", "hippo_std", "interaction_sf_driver", "nb_partants_std", "ecart_corde_std", "deferre_4_pieds"]
+    X = sm.add_constant(df[vars_v18]).astype(float)
+    modele = sm.Logit(df["gagnant"].astype(float), X).fit(disp=0)
+    return {
+        "coefficients": {k: float(v) for k, v in modele.params.items()},
+        "standardisation": {
+            "speed_figure_avant_course": {"moyenne": float(normalisation["speed_figure_avant_course"][0]), "ecart_type": float(normalisation["speed_figure_avant_course"][1])},
+            "driver_forme": {"moyenne": float(normalisation["driver_forme"][0]), "ecart_type": float(normalisation["driver_forme"][1])},
+            "biais_hippodrome": {"moyenne": float(normalisation["biais_hippodrome"][0]), "ecart_type": float(normalisation["biais_hippodrome"][1])},
+            "nb_partants_course": {"moyenne": float(normalisation["nb_partants_course"][0]), "ecart_type": float(normalisation["nb_partants_course"][1])},
+            "ecart_corde": {"moyenne": float(normalisation["ecart_corde"][0]), "ecart_type": float(normalisation["ecart_corde"][1])},
+        },
+        "nb_lignes_entrainement": len(df),
+        "date_export": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+    }
+
+
+def entrainer_v110(df, normalisation):
+    vars_v110 = ["sf_std", "log_cote", "driver_std", "hippo_std", "interaction_sf_driver", "nb_partants_std", "ecart_corde_std", "deferre_4_pieds", "age_std", "indicateur_femelle", "taux_victoire_std"]
+    X = sm.add_constant(df[vars_v110]).astype(float)
+    modele = sm.Logit(df["gagnant"].astype(float), X).fit(disp=0)
+    return {
+        "coefficients": {k: float(v) for k, v in modele.params.items()},
+        "moyennes_ecarts_types": {
+            "speed_figure_avant_course": {"moyenne": float(normalisation["speed_figure_avant_course"][0]), "ecart_type": float(normalisation["speed_figure_avant_course"][1])},
+            "driver_forme": {"moyenne": float(normalisation["driver_forme"][0]), "ecart_type": float(normalisation["driver_forme"][1])},
+            "biais_hippodrome": {"moyenne": float(normalisation["biais_hippodrome"][0]), "ecart_type": float(normalisation["biais_hippodrome"][1])},
+            "nb_partants_course": {"moyenne": float(normalisation["nb_partants_course"][0]), "ecart_type": float(normalisation["nb_partants_course"][1])},
+            "ecart_corde": {"moyenne": float(normalisation["ecart_corde"][0]), "ecart_type": float(normalisation["ecart_corde"][1])},
+            "age": {"moyenne": float(normalisation["age"][0]), "ecart_type": float(normalisation["age"][1])},
+            "taux_victoire_carriere": {"moyenne": float(normalisation["taux_victoire_carriere"][0]), "ecart_type": float(normalisation["taux_victoire_carriere"][1])},
+        },
+        "nb_lignes_entrainement": len(df),
+        "date_export": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+    }
+
+
+def verifier_coherence_signes(nouveaux_coefs, chemin_modele_actuel):
+    """Compare le signe de chaque coefficient au modele actuellement
+    en production. Retourne (est_coherent, liste_alertes)."""
+    if not os.path.exists(chemin_modele_actuel):
+        return True, []
+    with open(chemin_modele_actuel, "r") as f:
+        ancien = json.load(f)
+    anciens_coefs = ancien.get("coefficients", {})
+
+    alertes = []
+    for nom, nouvelle_valeur in nouveaux_coefs.items():
+        if nom not in anciens_coefs:
+            continue
+        ancienne_valeur = anciens_coefs[nom]
+        if abs(nouvelle_valeur) < SEUIL_ALERTE_CHANGEMENT_SIGNE and abs(ancienne_valeur) < SEUIL_ALERTE_CHANGEMENT_SIGNE:
+            continue
+        if (nouvelle_valeur > 0) != (ancienne_valeur > 0):
+            alertes.append(f"  {nom} : {ancienne_valeur:+.4f} -> {nouvelle_valeur:+.4f} (changement de signe)")
+
+    return len(alertes) == 0, alertes
+
+
+def main():
+    print("Debut du reentrainement automatique.")
+    dossier_temp = "/tmp/reentrainement_data"
+    os.makedirs(dossier_temp, exist_ok=True)
+
+    print("Authentification Google Drive (compte de service)...")
+    service = authentifier_drive()
+
+    print("Telechargement des fichiers sources...")
+    for nom_fichier in FICHIERS_A_TELECHARGER:
+        telecharger_fichier_drive(service, nom_fichier, ID_DOSSIER_DRIVE, f"{dossier_temp}/{nom_fichier}")
+
+    print("Preparation des donnees...")
+    df, normalisation = preparer_donnees(dossier_temp)
+    print(f"  {len(df)} lignes disponibles pour l'entrainement, jusqu'au {df['date_dt'].max().date()}")
+
+    print("Entrainement des 4 modeles...")
+    nouveaux_modeles = {
+        "v14": (entrainer_v14(df, normalisation), f"{RACINE}/modele_v14_production.json"),
+        "v18": (entrainer_v18(df, normalisation), f"{RACINE}/modele_v18_production.json"),
+        "v110": (entrainer_v110(df, normalisation), f"{RACINE}/modele_v110_production.json"),
+    }
+
+    rapport = f"🔄 <b>Reentrainement automatique</b> ({datetime.now(timezone.utc).strftime('%Y-%m-%d')})\n\n"
+    rapport += f"Donnees : {len(df)} lignes, jusqu'au {df['date_dt'].max().date()}\n\n"
+
+    au_moins_un_probleme = False
+    for nom_cle, (nouveau_modele, chemin_fichier) in nouveaux_modeles.items():
+        coherent, alertes = verifier_coherence_signes(nouveau_modele["coefficients"], chemin_fichier)
+        if coherent:
+            with open(chemin_fichier, "w") as f:
+                json.dump(nouveau_modele, f, indent=2)
+            rapport += f"✅ {nom_cle} : deploye (coefficients coherents avec le modele precedent)\n"
+            print(f"  {nom_cle} : deploye.")
+        else:
+            au_moins_un_probleme = True
+            rapport += f"⚠️ {nom_cle} : PAS deploye - changement de signe suspect :\n" + "\n".join(alertes) + "\n"
+            print(f"  {nom_cle} : NON deploye (changement de signe suspect).")
+
+    if au_moins_un_probleme:
+        rapport += "\n<i>Verification manuelle necessaire avant un prochain essai. Les modeles concernes restent sur leurs coefficients precedents.</i>"
+    else:
+        rapport += "\n<i>Tous les modeles reentraines et deployes automatiquement.</i>"
+
+    envoyer_telegram(rapport)
+    print("Reentrainement automatique termine.")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        import traceback
+        detail = traceback.format_exc()[-800:]
+        detail_echappe = detail.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        message_erreur_echappe = str(e).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        envoyer_telegram(f"🔴 Erreur dans reentrainement_automatique.py\n\n{message_erreur_echappe}\n\n{detail_echappe}")
+        raise
