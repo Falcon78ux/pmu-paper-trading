@@ -530,7 +530,18 @@ def calculer_mise_v14sire(proba, cote, bankroll):
 
 
 def mettre_a_jour_bankroll(chemin, nouvelle_bankroll):
-    sauvegarder_json(chemin, {"bankroll": round(nouvelle_bankroll, 2)})
+    """CORRIGE (13 sept) : plancher a 0 ajoute - sans lui, une bankroll
+    pouvait descendre sous zero et y rester indefiniment (confirme sur
+    v1.4, v1.4-Recalibre, 2sur4, trio en production reelle). Cause
+    probable : plusieurs mises calculees le meme jour a partir
+    d'instantanes legerement differents de la bankroll (verifier_a_venir.py
+    ne "reserve" jamais la bankroll au moment de la detection), qui
+    peuvent depasser ce qui reste reellement disponible si plusieurs
+    perdent d'affilee sur une bankroll deja basse. Ce plancher est le
+    meme reflexe deja applique dans tous nos scripts de simulation
+    Colab (bankroll = max(bankroll, 0)), jamais reporte ici jusqu'a
+    present."""
+    sauvegarder_json(chemin, {"bankroll": round(max(nouvelle_bankroll, 0), 2)})
 
 
 def calculer_proba_avec_contributions(valeurs_brutes, modele):
