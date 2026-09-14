@@ -1,0 +1,21 @@
+{
+  "coefficients": {
+    "const": 0.624728366217867,
+    "log_cote": -1.326659085890066,
+    "jockey_std": -0.03699267020405951
+  },
+  "normalisation": {
+    "jockey_forme": {
+      "moyenne": 0.0850110235046187,
+      "ecart_type": 0.05504682783153204
+    }
+  },
+  "nb_lignes_entrainement": 46152,
+  "date_export": "2026-09-14",
+  "hippodromes_couverts": [
+    "CHANTILLY",
+    "DEAUVILLE",
+    "PARISLONGCHAMP",
+    "SAINT-CLOUD"
+  ]
+}
