@@ -36,7 +36,35 @@ jobs:
           TELEGRAM_CHAT_ID_GALOP: ${{ secrets.TELEGRAM_CHAT_ID_GALOP }}
         run: python scripts/verifier_resultats_galop.py
 
-      - name: Sauvegarder les fichiers galop mis a jour
+            - name: Sauvegarder les fichiers galop mis a jour (DIAGNOSTIC)
+        run: |
+          set -x
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          echo "=== ETAT GIT AVANT ==="
+          git status
+          git branch -vv
+          git remote -v
+
+          echo "=== GIT ADD ==="
+          git add etat_drivers_galop.json etat_pause_galop.json courses_notifiees_galop.json paris_virtuels_galop.csv bankroll_galopev.json bankroll_galopplace.json || echo "ADD_ECHEC: $?"
+
+          echo "=== GIT DIFF/COMMIT ==="
+          if git diff --quiet --cached; then
+            echo "Rien a committer."
+          else
+            git commit -m "Mise a jour automatique galop" || echo "COMMIT_ECHEC: $?"
+          fi
+
+          echo "=== GIT PULL ==="
+          git pull --rebase --autostash -X theirs origin main || echo "PULL_ECHEC: $?"
+
+          echo "=== GIT PUSH ==="
+          git push || echo "PUSH_ECHEC: $?"
+
+          echo "=== TERMINE ==="
+
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
