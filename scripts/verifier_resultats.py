@@ -2,6 +2,20 @@
 =============================================================================
 VERIFIER_RESULTATS.PY - Compare aux resultats reels, met a jour l'historique
 =============================================================================
+CORRIGE (15 sept, audit) : les mises a jour d'etat critiques
+(speed_figure via maj_cheval, forme driver, forme sire, biais
+hippodrome) se faisaient de facon INCONDITIONNELLE pour chaque course
+avec resultat disponible, AVANT meme de savoir si les paris combines
+(2sur4/trio/multi/couple_harville/place) pouvaient etre resolus. Si
+une course restait "en attente" plusieurs cycles (rapports combines
+indisponibles, delai 48h deja gere ailleurs), ces mises a jour se
+reproduisaient A L'IDENTIQUE a chaque cycle - risque de double
+comptage du signal le plus important du projet
+(speed_figure_avant_course). Corrige via un nouveau fichier d'etat
+(etat_courses_maj_signal.json) qui trace les courses deja traitees
+pour CES mises a jour specifiquement, independamment de la resolution
+des paris.
+
 NOUVEAU (21 aout) : consensus_place ajoute - resolution standard marche
 gagnant identique a v1.4/v1.10 (aucune nouvelle logique necessaire).
 Emojis restaures (✅/❌) suite a une demande explicite - le remplacement
@@ -28,6 +42,14 @@ from commun import (
 )
 
 RACINE = os.path.join(os.path.dirname(__file__), "..")
+
+DELAI_ABANDON_RESULTAT_JOURS = 7  # NOUVEAU (15 sept, audit) : si le PMU
+# ne publie JAMAIS de resultat pour une course (ordreArrivee reste None
+# indefiniment - decouvert le 15 sept sur une reunion entiere du 12
+# aout, toujours bloquee un mois plus tard), les paris restaient
+# bloques pour toujours (aucun mecanisme d'abandon n'existait pour ce
+# cas - seul le delai 48h des RAPPORTS COMBINES existait). Abandonne et
+# rembourse desormais apres 7 jours d'absence totale de resultat.
 
 INCIDENTS_A_EXCLURE = {
     "DISQUALIFIE_POUR_ALLURE_IRREGULIERE", "NON_PARTANT", "DISTANCE",
@@ -93,13 +115,6 @@ def extraire_cote_deux_sur_quatre(data):
 
 
 def extraire_trio(data):
-    """CORRIGE (26 aout) : le Trio peut se "degrader" en un pari a 2
-    chevaux (combinaison de 2 numeros au lieu de 3, libelle "Trio
-    degrade X rangs") quand trop peu de chevaux terminent
-    valablement la course. Retourne desormais un 4e element
-    (est_degrade) pour permettre au code appelant d'utiliser une
-    correspondance de SOUS-ENSEMBLE (2 des 3 chevaux paries presents
-    dans la paire degradee) plutot qu'une egalite stricte a 3."""
     for pari in data:
         if pari.get("typePari") != "TRIO":
             continue
@@ -122,17 +137,6 @@ def extraire_trio(data):
 
 
 def extraire_cote_multi(data, type_pari):
-    """CORRIGE (26 aout) : le MULTI/MINI_MULTI a plusieurs paliers
-    ("en 4", "en 5", "en 6", "en 7") correspondant au nombre de
-    chevaux joues sur le ticket - PAS des gains partiels differents,
-    le meme resultat gagnant mais un tarif different selon combien de
-    chevaux on a selectionne. Notre strategie ne joue TOUJOURS que 4
-    chevaux exacts (le palier "en 4") - prendre le dividende MAXIMUM
-    parmi tous les paliers (ancien comportement) pouvait
-    accidentellement substituer un autre palier (ex. "en 5") quand
-    "en 4" affichait 0 (aucun autre parieur n'avait achete ce ticket
-    exact ce jour-la), gonflant artificiellement le gain. On cible
-    desormais specifiquement le libelle contenant "en 4"."""
     for pari in data:
         if pari.get("typePari") != type_pari:
             continue
@@ -148,12 +152,6 @@ def extraire_cote_multi(data, type_pari):
 
 
 def extraire_couple_gagnant(data):
-    """CORRIGE (26 aout) : le Couple Gagnant peut avoir PLUSIEURS
-    combinaisons gagnantes simultanees (cas d'egalite/dead-heat au
-    poteau) - l'ancien code ne regardait que la premiere trouvee et
-    aurait rate un pari gagnant correspondant a une 2e combinaison.
-    Retourne desormais la LISTE de toutes les combinaisons gagnantes
-    avec leur dividende respectif."""
     resultats = []
     for pari in data:
         type_pari = pari.get("typePari", "")
@@ -169,7 +167,7 @@ def extraire_couple_gagnant(data):
             dividende = rap.get("dividendePourUneMiseDeBase")
             if dividende is not None:
                 resultats.append((ensemble, dividende / mise_base, combinaison))
-        break  # un seul type trouve (GAGNANT ou ORDRE) suffit, ne pas melanger les deux nomenclatures
+        break
     return resultats
 
 
@@ -197,6 +195,12 @@ def main():
     etat_sire_forme = charger_json(f"{RACINE}/etat_sire_forme.json", {})
     etat_deferrage = charger_json(f"{RACINE}/etat_deferrage.json", {})
     etat_pause = charger_json(f"{RACINE}/etat_pause.json", {})
+    # CORRIGE (15 sept, audit) : trace les courses deja traitees pour
+    # les mises a jour d'etat critiques (speed_figure, driver, sire,
+    # hippodrome), SEPAREMENT de la resolution des paris combines -
+    # evite le double comptage si une course reste en attente plusieurs
+    # cycles (rapports combines indisponibles).
+    etat_courses_maj_signal = charger_json(f"{RACINE}/etat_courses_maj_signal.json", {})
     table_pedigree = charger_table_pedigree(f"{RACINE}/pedigree_aplati.csv")
     constantes = charger_json(f"{RACINE}/constantes.json", {})
     offset_discipline = constantes.get("offset_discipline_monte_moins_attele_ms_km", -400)
@@ -259,6 +263,35 @@ def main():
             continue
 
         if not resultat_disponible(participants):
+            # NOUVEAU (15 sept, audit) : verifie si le resultat n'est
+            # JAMAIS apparu depuis trop longtemps - si oui, abandonne
+            # et rembourse tous les paris en attente sur cette course,
+            # plutot que de la laisser bloquee indefiniment.
+            lignes_pari_race = [l for l in lignes if l["race_id"] == race_id and l.get("resultat", "") == ""]
+            if lignes_pari_race:
+                plus_ancienne_detection = min(l.get("date_detection", "") for l in lignes_pari_race)
+                delai_depasse_resultat = False
+                try:
+                    date_detect = datetime.fromisoformat(plus_ancienne_detection)
+                    if (datetime.now(timezone.utc) - date_detect).total_seconds() > DELAI_ABANDON_RESULTAT_JOURS * 24 * 3600:
+                        delai_depasse_resultat = True
+                except (ValueError, TypeError):
+                    pass
+
+                if delai_depasse_resultat:
+                    for l in lignes_pari_race:
+                        l["resultat"] = "ANNULE"
+                        l["gain_euros"] = "0.00"
+                        ecrire_audit({
+                            "race_id": race_id, "modele": l["modele"],
+                            "chevaux_paries": l["cheval"],
+                            "rangs_arrivee_chevaux_paries": "",
+                            "top4_reel": "", "combinaison_rapport_brute": "resultat_jamais_publie_par_pmu",
+                            "cote_utilisee": "", "gain_calcule": "0.00", "resultat": "ANNULE",
+                            "coherence_verifiee": "OK",
+                            "detail_incoherence": f"Aucun resultat PMU apres {DELAI_ABANDON_RESULTAT_JOURS} jours - mise remboursee",
+                            "date_verif": datetime.now(timezone.utc).isoformat(),
+                        })
             continue
 
         infos_course = courses_notifiees.get(race_id, {})
@@ -275,71 +308,68 @@ def main():
         )
         top4_reel_str = "|".join(top4_reel_noms)
 
-        valides = []
-        for p in participants:
-            incident = p.get("incident", "") or ""
-            rk = p.get("reductionKilometrique")
-            if incident in INCIDENTS_A_EXCLURE or rk is None:
-                continue
-            valides.append(p)
+        # === MISES A JOUR D'ETAT CRITIQUES - DESORMAIS PROTEGEES CONTRE
+        # LE DOUBLE COMPTAGE (executees une seule fois par race_id,
+        # jamais reproduites si la course reste en attente pour ses
+        # paris combines) ===
+        if race_id not in etat_courses_maj_signal:
+            valides = []
+            for p in participants:
+                incident = p.get("incident", "") or ""
+                rk = p.get("reductionKilometrique")
+                if incident in INCIDENTS_A_EXCLURE or rk is None:
+                    continue
+                valides.append(p)
 
-        if len(valides) >= min_partants_sf:
-            rks_ajustees = []
-            for p in valides:
-                rk = p["reductionKilometrique"]
-                if p.get("allure") == "MONTE" or (p.get("discipline") == "MONTE"):
-                    rk = rk - offset_discipline
-                rks_ajustees.append(rk)
-            track_variant = sorted(rks_ajustees)[len(rks_ajustees) // 2]
+            if len(valides) >= min_partants_sf:
+                rks_ajustees = []
+                for p in valides:
+                    rk = p["reductionKilometrique"]
+                    if p.get("allure") == "MONTE" or (p.get("discipline") == "MONTE"):
+                        rk = rk - offset_discipline
+                    rks_ajustees.append(rk)
+                track_variant = sorted(rks_ajustees)[len(rks_ajustees) // 2]
 
-            for p, rk_adj in zip(valides, rks_ajustees):
-                sf_brut = track_variant - rk_adj
-                sf_brut = max(-plafond_ecart, min(plafond_ecart, sf_brut))
-                maj_cheval(etat_chevaux, p.get("nom"), sf_brut)
-                if corde_course:
-                    maj_cheval_corde(etat_chevaux_corde, p.get("nom"), corde_course, sf_brut)
+                for p, rk_adj in zip(valides, rks_ajustees):
+                    sf_brut = track_variant - rk_adj
+                    sf_brut = max(-plafond_ecart, min(plafond_ecart, sf_brut))
+                    maj_cheval(etat_chevaux, p.get("nom"), sf_brut)
+                    if corde_course:
+                        maj_cheval_corde(etat_chevaux_corde, p.get("nom"), corde_course, sf_brut)
 
-        somme_ecart_course = 0.0
-        nb_partants_course = 0
-        for p in participants:
-            # CORRIGE (31 aout) : bug trouve suite a l'investigation du
-            # signal D4 jamais declenche - environ 20% des PARTANTS
-            # (verifie sur donnees API reelles) ont ordreArrivee=None
-            # meme sur une course a "arrivee definitive complete"
-            # (probablement un delai de mise a jour cote PMU). L'ancien
-            # code sautait ENTIEREMENT ces chevaux via "continue" avant
-            # meme d'atteindre maj_deferrage - alors que le statut de
-            # deferrage ne depend absolument pas du rang d'arrivee.
-            # maj_deferrage est desormais appelee pour TOUS les
-            # partants, independamment de la disponibilite du rang.
-            if p.get("statut") == "PARTANT":
-                maj_deferrage(etat_deferrage, p.get("nom"), extraire_deferre_4_pieds(p))
+            somme_ecart_course = 0.0
+            nb_partants_course = 0
+            for p in participants:
+                if p.get("statut") == "PARTANT":
+                    maj_deferrage(etat_deferrage, p.get("nom"), extraire_deferre_4_pieds(p))
 
-            rang = p.get("ordreArrivee")
-            if rang is None:
-                continue
-            gagnant = 1 if rang == 1 else 0
-            driver = p.get("driver") or p.get("entraineur")
-            if driver:
-                maj_driver(etat_drivers, driver, gagnant)
+                rang = p.get("ordreArrivee")
+                if rang is None:
+                    continue
+                gagnant = 1 if rang == 1 else 0
+                driver = p.get("driver") or p.get("entraineur")
+                if driver:
+                    maj_driver(etat_drivers, driver, gagnant)
 
-            maj_dernier_rang(etat_dernier_rang, p.get("nom"), rang)
+                maj_dernier_rang(etat_dernier_rang, p.get("nom"), rang)
 
-            pere = table_pedigree.get(p.get("nom"))
-            if pere:
-                maj_sire_forme(etat_sire_forme, pere, float(gagnant))
+                pere = table_pedigree.get(p.get("nom"))
+                if pere:
+                    maj_sire_forme(etat_sire_forme, pere, float(gagnant))
 
-            cote = None
-            rapport = p.get("dernierRapportDirect")
-            if rapport and rapport.get("typePari") == "SIMPLE_GAGNANT":
-                cote = rapport.get("rapport")
-            if cote and cote > 1:
-                ecart = gagnant - (1 / cote)
-                somme_ecart_course += ecart
-                nb_partants_course += 1
+                cote = None
+                rapport = p.get("dernierRapportDirect")
+                if rapport and rapport.get("typePari") == "SIMPLE_GAGNANT":
+                    cote = rapport.get("rapport")
+                if cote and cote > 1:
+                    ecart = gagnant - (1 / cote)
+                    somme_ecart_course += ecart
+                    nb_partants_course += 1
 
-        if nb_partants_course > 0 and hippodrome_nom:
-            maj_hippodrome(etat_hippodromes, hippodrome_nom, somme_ecart_course, nb_partants_course)
+            if nb_partants_course > 0 and hippodrome_nom:
+                maj_hippodrome(etat_hippodromes, hippodrome_nom, somme_ecart_course, nb_partants_course)
+
+            etat_courses_maj_signal[race_id] = True
 
         paris_combines_en_attente = {"place", "2sur4", "trio", "multi", "couple_harville", "v110place"}
         a_un_pari_combine_en_attente = any(
@@ -416,8 +446,6 @@ def main():
                     })
                     continue
 
-                # CORRIGE (26 aout) : cherche notre pick parmi TOUTES les
-                # combinaisons gagnantes possibles (cas d'egalite/dead-heat)
                 a_gagne = False
                 couple_reel_cote = None
                 couple_combinaison_brute = "|".join(c[2] for c in couple_reel_liste)
@@ -457,11 +485,6 @@ def main():
                 a_gagne = all(r is not None and r <= 4 for r in rangs)
 
                 if a_gagne and not cote_2sur4:
-                    # CORRIGE (26 aout) : meme protection anti-boucle-
-                    # infinie que pour trio/couple - si le pari est
-                    # gagnant mais la cote reste introuvable pendant
-                    # plus de 48h, on abandonne et on rembourse la
-                    # mise plutot que de retenter indefiniment.
                     delai_depasse = False
                     try:
                         date_detect = datetime.fromisoformat(l.get("date_detection", ""))
@@ -519,14 +542,6 @@ def main():
                 a_gagne_independant = set(rangs) == {1, 2, 3}
 
                 if trio_reel_ensemble is None:
-                    # CORRIGE (26 aout) : evite la boucle infinie de
-                    # re-tentatives - si le rapport TRIO reste
-                    # indisponible/NP pendant plus de 48h apres la
-                    # detection du pari, c'est que le pool a ete
-                    # declare definitivement annule par le PMU (jamais
-                    # de resolution possible) - on arrete de reessayer
-                    # et on rembourse la mise (gain=0) plutot que de
-                    # retenter indefiniment toutes les 15 minutes.
                     delai_depasse = False
                     try:
                         date_detect = datetime.fromisoformat(l.get("date_detection", ""))
@@ -566,10 +581,6 @@ def main():
                 except Exception:
                     continue
 
-                # CORRIGE (26 aout) : si le trio est degrade (rapport a 2
-                # chevaux au lieu de 3), on gagne si ces 2 chevaux sont
-                # tous les deux parmi nos 3 paries (sous-ensemble),
-                # pas une egalite stricte a 3
                 if trio_est_degrade:
                     a_gagne = trio_reel_ensemble.issubset(ensemble_parie)
                 else:
@@ -920,6 +931,7 @@ def main():
     sauvegarder_json(f"{RACINE}/etat_dernier_rang.json", etat_dernier_rang)
     sauvegarder_json(f"{RACINE}/etat_sire_forme.json", etat_sire_forme)
     sauvegarder_json(f"{RACINE}/etat_deferrage.json", etat_deferrage)
+    sauvegarder_json(f"{RACINE}/etat_courses_maj_signal.json", etat_courses_maj_signal)
 
     print(f"{len(courses_traitees_ce_run)} courses traitees dans ce run.")
 
