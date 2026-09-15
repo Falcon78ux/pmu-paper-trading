@@ -1,13 +1,6 @@
 """
 =============================================================================
-VERIFIER_RESULTATS_GALOP.PY - Compare aux resultats reels, met a jour
-la forme du jockey, resout les paris galop
-=============================================================================
-ENTIEREMENT SEPARE du trot. SIMPLIFIE (14 sept, apres-midi) : plus
-aucune dependance au scraping PDF McLloyd (redk retire du modele final
-suite a une investigation rigoureuse) - tout passe desormais par
-l'API PMU officielle, comme le trot. Plus de delai 48h a gerer pour
-un PDF externe, plus simple et plus fiable.
+VERIFIER_RESULTATS_GALOP.PY
 =============================================================================
 """
 
@@ -27,6 +20,12 @@ from commun_galop import (
 RACINE = os.path.join(os.path.dirname(__file__), "..")
 
 DELAI_ABANDON_HEURES = 48
+DELAI_ABANDON_RESULTAT_JOURS = 7  # NOUVEAU (15 sept, audit) : si le PMU
+# ne publie JAMAIS de resultat pour une course (meme faille trouvee sur
+# le trot le meme jour), les paris galopev/galopplace restaient
+# bloques indefiniment - aucun mecanisme d'abandon n'existait pour ce
+# cas. Abandonne et rembourse desormais apres 7 jours d'absence totale
+# de resultat.
 
 
 def recuperer_participants(date_str, num_reunion, num_course):
@@ -82,6 +81,15 @@ def delai_depasse(date_detection_iso, heures=DELAI_ABANDON_HEURES):
 def main():
     etat_drivers_galop = charger_json(f"{RACINE}/etat_drivers_galop.json", {})
     etat_pause_galop = charger_json(f"{RACINE}/etat_pause_galop.json", {})
+    # CORRIGE (14 sept, audit) : trace les courses deja traitees pour la
+    # forme jockey, SEPAREMENT de la resolution des paris - sans ca, une
+    # course dont un pari reste bloque en attente (ex. rapports Place
+    # indisponibles, delai 48h) reste dans races_en_attente a chaque
+    # cycle, et la forme de chaque jockey de cette course etait remise a
+    # jour a CHAQUE PASSAGE (potentiellement toutes les 15 minutes
+    # pendant des heures) - comptant le meme resultat plusieurs fois dans
+    # l'historique glissant.
+    etat_courses_jockey_maj_galop = charger_json(f"{RACINE}/etat_courses_jockey_maj_galop.json", {})
 
     bankroll_ev, chemin_bankroll_ev = get_bankroll_galop(RACINE, "galopev")
     bankroll_place, chemin_bankroll_place = get_bankroll_galop(RACINE, "galopplace")
@@ -109,6 +117,23 @@ def main():
             continue
 
         if not resultat_disponible(participants):
+            # NOUVEAU (15 sept, audit) : abandonne et rembourse si le
+            # resultat n'est jamais apparu depuis trop longtemps.
+            lignes_pari_race = [l for l in lignes if l["race_id"] == race_id and l.get("resultat", "") == ""]
+            if lignes_pari_race:
+                plus_ancienne_detection = min(l.get("date_detection", "") for l in lignes_pari_race)
+                delai_depasse_resultat = False
+                try:
+                    date_detect = datetime.fromisoformat(plus_ancienne_detection)
+                    if (datetime.now(timezone.utc) - date_detect).total_seconds() > DELAI_ABANDON_RESULTAT_JOURS * 24 * 3600:
+                        delai_depasse_resultat = True
+                except (ValueError, TypeError):
+                    pass
+
+                if delai_depasse_resultat:
+                    for l in lignes_pari_race:
+                        l["resultat"] = "ANNULE"
+                        l["gain_euros"] = "0.00"
             continue
 
         rang_par_nom = {
@@ -116,19 +141,19 @@ def main():
             for p in participants if p.get("ordreArrivee") is not None
         }
 
-        # --- Met a jour la forme du jockey pour TOUS les participants ---
-        for p in participants:
-            rang = p.get("ordreArrivee")
-            if rang is None:
-                continue
-            gagnant = 1 if rang == 1 else 0
-            driver = p.get("driver") or p.get("entraineur")
-            if driver:
-                maj_jockey_forme_galop(etat_drivers_galop, driver, gagnant)
+        if race_id not in etat_courses_jockey_maj_galop:
+            for p in participants:
+                rang = p.get("ordreArrivee")
+                if rang is None:
+                    continue
+                gagnant = 1 if rang == 1 else 0
+                driver = p.get("driver") or p.get("entraineur")
+                if driver:
+                    maj_jockey_forme_galop(etat_drivers_galop, driver, gagnant)
+            etat_courses_jockey_maj_galop[race_id] = True
 
         lignes_du_pari_en_attente = [l for l in lignes if l["race_id"] == race_id and l.get("resultat", "") == ""]
 
-        # --- Rapports Place (necessaire pour resoudre galopplace) ---
         a_un_pari_place_en_attente = any(l["modele"] == "galopplace" for l in lignes_du_pari_en_attente)
         rapports_place = None
         rapports_indisponibles = False
@@ -205,6 +230,7 @@ def main():
     mettre_a_jour_bankroll_galop(chemin_bankroll_place, bankroll_place)
 
     sauvegarder_json(f"{RACINE}/etat_drivers_galop.json", etat_drivers_galop)
+    sauvegarder_json(f"{RACINE}/etat_courses_jockey_maj_galop.json", etat_courses_jockey_maj_galop)
 
     print(f"Verification resultats galop terminee.")
 
