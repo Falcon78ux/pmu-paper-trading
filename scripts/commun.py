@@ -19,6 +19,20 @@ visible dans les logs GitHub Actions : "Bad Request: message is too
 long") a mesure que le nombre de strategies a grandi (26 desormais).
 Cette correction protege TOUTES les commandes actuelles et futures,
 pas seulement /progression.
+
+NOUVEAU (17 sept) : calculer_proba_v110_A() et
+calculer_proba_v110_avec_entropie_et_contributions() ajoutees -
+l'entropie de Shannon de la course a ete validee comme 12e variable
+du modele v1.10 (test retrospectif log-loss/Brier : 94% de fenetres
+gagnantes, contre 56% en ROI seul - le ROI etait un critere trop
+bruite pour juger ce signal correctement). Necessite un calcul en 2
+passes par course (l'entropie depend des probas de TOUS les chevaux,
+qu'on ne connait qu'apres un premier calcul) : modele_v110_A (11
+variables standard, SANS entropie) sert a generer les probas
+preliminaires necessaires au calcul de l'entropie ; le "vrai" modele
+v1.10 (modele_v110_production.json) contient desormais 12 variables
+et n'est plus compatible avec calculer_proba_v110_ou_place_avec_contributions
+(reservee au modele Place, qui lui reste a 11 variables, inchange).
 =============================================================================
 """
 
@@ -600,6 +614,9 @@ def calculer_proba_v18_avec_contributions(valeurs_brutes, modele_v18):
 
 
 def calculer_proba_v110_ou_place_avec_contributions(valeurs_brutes, modele):
+    """INCHANGEE - reservee au modele PLACE (11 variables standard,
+    sans entropie). Le modele v1.10 (Gagnant) utilise desormais
+    calculer_proba_v110_avec_entropie_et_contributions ci-dessous."""
     coefs = modele["coefficients"]
     norm = modele["moyennes_ecarts_types"]
 
@@ -635,6 +652,123 @@ def calculer_proba_v110_ou_place_avec_contributions(valeurs_brutes, modele):
         "age": coefs.get("age_std", 0.0) * age_std,
         "sexe_femelle": coefs.get("indicateur_femelle", 0.0) * valeurs_brutes["indicateur_femelle"],
         "taux_victoire_carriere": coefs.get("taux_victoire_std", 0.0) * taux_victoire_std,
+    }
+    z = coefs.get("const", 0.0) + sum(contributions.values())
+    return sigmoid(z), contributions
+
+
+def calculer_proba_v110_A(valeurs_brutes, modele_A):
+    """NOUVEAU (17 sept) : version SIMPLE (sans contributions, juste
+    la proba) du modele v1.10 standard a 11 variables - sert
+    UNIQUEMENT a generer les probas preliminaires necessaires au
+    calcul de l'entropie de la course (premiere passe), avant le
+    calcul de la vraie proba finale via
+    calculer_proba_v110_avec_entropie_et_contributions. Lit la cle
+    "normalisation" (pas "moyennes_ecarts_types") - convention du
+    fichier modele_v110_A_production.json exporte le 16 sept."""
+    coefs = modele_A["coefficients"]
+    norm = modele_A["normalisation"]
+
+    requis = ["speed_figure_avant_course", "driver_forme", "biais_hippodrome",
+              "nb_partants_course", "ecart_corde", "age", "taux_victoire_carriere"]
+    for var in requis:
+        if var not in valeurs_brutes or valeurs_brutes[var] is None:
+            return None
+
+    def std(var):
+        m = norm[var]["moyenne"]
+        s = norm[var]["ecart_type"]
+        return (valeurs_brutes[var] - m) / s
+
+    sf_std = std("speed_figure_avant_course")
+    driver_std = std("driver_forme")
+    hippo_std = std("biais_hippodrome")
+    nb_partants_std = std("nb_partants_course")
+    ecart_corde_std = std("ecart_corde")
+    age_std = std("age")
+    taux_victoire_std = std("taux_victoire_carriere")
+    interaction = sf_std * driver_std
+
+    z = coefs.get("const", 0.0)
+    z += coefs.get("sf_std", 0.0) * sf_std
+    z += coefs.get("log_cote", 0.0) * valeurs_brutes["log_cote"]
+    z += coefs.get("driver_std", 0.0) * driver_std
+    z += coefs.get("hippo_std", 0.0) * hippo_std
+    z += coefs.get("interaction_sf_driver", 0.0) * interaction
+    z += coefs.get("nb_partants_std", 0.0) * nb_partants_std
+    z += coefs.get("ecart_corde_std", 0.0) * ecart_corde_std
+    z += coefs.get("deferre_4_pieds", 0.0) * valeurs_brutes["deferre_4_pieds"]
+    z += coefs.get("age_std", 0.0) * age_std
+    z += coefs.get("indicateur_femelle", 0.0) * valeurs_brutes["indicateur_femelle"]
+    z += coefs.get("taux_victoire_std", 0.0) * taux_victoire_std
+
+    return sigmoid(z)
+
+
+def calculer_entropie_course(probas):
+    """NOUVEAU (17 sept) : entropie de Shannon de la distribution des
+    probas (premiere passe, modele A) sur une course - meme formule
+    que celle validee en recherche. Retourne None si la liste est
+    vide ou si la somme des probas est nulle (garde-fou)."""
+    if not probas:
+        return None
+    somme = sum(probas)
+    if somme <= 0:
+        return None
+    probas_norm = [p / somme for p in probas]
+    return -sum(p * math.log(p) for p in probas_norm if p > 0)
+
+
+def calculer_proba_v110_avec_entropie_et_contributions(valeurs_brutes, modele):
+    """NOUVEAU (17 sept) : le "vrai" modele v1.10 de production,
+    desormais a 12 variables (11 standard + entropie de la course,
+    validee par test retrospectif log-loss/Brier - 94% de fenetres
+    gagnantes, largement sous-estime par le ROI seul qui n'observait
+    que la tranche extreme des value bets). valeurs_brutes doit
+    contenir une cle "entropie" en plus des 11 variables habituelles
+    (calculee via calculer_entropie_course sur les probas
+    preliminaires de TOUS les chevaux de la course, modele_v110_A).
+    Lit la cle "normalisation" (convention du fichier
+    modele_v110_production.json reexporte le 16 sept, distincte de
+    l'ancienne cle "moyennes_ecarts_types" gardee par le modele
+    Place inchange)."""
+    coefs = modele["coefficients"]
+    norm = modele["normalisation"]
+
+    requis = ["speed_figure_avant_course", "driver_forme", "biais_hippodrome",
+              "nb_partants_course", "ecart_corde", "age", "taux_victoire_carriere", "entropie"]
+    for var in requis:
+        if var not in valeurs_brutes or valeurs_brutes[var] is None:
+            return None, {}
+
+    def std(var):
+        m = norm[var]["moyenne"]
+        s = norm[var]["ecart_type"]
+        return (valeurs_brutes[var] - m) / s
+
+    sf_std = std("speed_figure_avant_course")
+    driver_std = std("driver_forme")
+    hippo_std = std("biais_hippodrome")
+    nb_partants_std = std("nb_partants_course")
+    ecart_corde_std = std("ecart_corde")
+    age_std = std("age")
+    taux_victoire_std = std("taux_victoire_carriere")
+    entropie_std = std("entropie")
+    interaction = sf_std * driver_std
+
+    contributions = {
+        "vitesse_recente": coefs.get("sf_std", 0.0) * sf_std,
+        "cote_marche": coefs.get("log_cote", 0.0) * valeurs_brutes["log_cote"],
+        "driver": coefs.get("driver_std", 0.0) * driver_std,
+        "hippodrome": coefs.get("hippo_std", 0.0) * hippo_std,
+        "interaction_cheval_driver": coefs.get("interaction_sf_driver", 0.0) * interaction,
+        "nb_partants": coefs.get("nb_partants_std", 0.0) * nb_partants_std,
+        "corde": coefs.get("ecart_corde_std", 0.0) * ecart_corde_std,
+        "deferrage": coefs.get("deferre_4_pieds", 0.0) * valeurs_brutes["deferre_4_pieds"],
+        "age": coefs.get("age_std", 0.0) * age_std,
+        "sexe_femelle": coefs.get("indicateur_femelle", 0.0) * valeurs_brutes["indicateur_femelle"],
+        "taux_victoire_carriere": coefs.get("taux_victoire_std", 0.0) * taux_victoire_std,
+        "entropie_course": coefs.get("entropie_std", 0.0) * entropie_std,
     }
     z = coefs.get("const", 0.0) + sum(contributions.values())
     return sigmoid(z), contributions
