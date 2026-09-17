@@ -9,25 +9,36 @@ VERIFIER_A_VENIR.PY - Detecte les value bets avant chaque course
 ce qui ne correspondait PAS a la methodologie de backtest (chaque
 outsider qualifie etait teste comme sa propre opportunite, n=14873
 pour v1.10). Bug identifie lors d'un audit complet comparant la
-logique de production a celle du backtest, suite a un desalignement
-observe entre performance backtest et direct sur plusieurs strategies
-(2sur4/trio/multi se sont reveles etre un faux probleme lie a l'IC95%,
-mais le dutching avait un vrai ecart de logique).
+logique de production a celle du backtest.
 
 NOUVEAU (16 sept) : LIMITE D'EXPOSITION GLOBALE PAR CHEVAL - suite a
 une analyse de risque (veille GitHub externe + mesure sur donnees
 reelles), decouverte que 55.7% des paris concernent un cheval deja
 parie par une autre strategie, avec jusqu'a 17 strategies
-simultanement sur le meme cheval. Mesure sur paris_virtuels.csv :
-les evenements "cheval partage" representaient -71 250EUR de pertes
-cumulees contre seulement -15 960EUR pour les paris isoles (4.5x plus
-concentre) - risque de portefeuille sous-estime, chaque bankroll
-etant calculee independamment sans jamais tenir compte de
-l'exposition cumulee reelle sur un meme cheval. Corrige en reduisant
-proportionnellement les mises (jamais en les rejetant, pour ne pas
-perdre l'information statistique de chaque strategie individuelle) si
+simultanement sur le meme cheval. Corrige en reduisant
+proportionnellement les mises (jamais en les rejetant) si
 l'exposition totale sur un cheval depasse PLAFOND_EXPOSITION_CHEVAL
 pour cette course.
+
+NOUVEAU (17 sept) : ENTROPIE COMME 12e VARIABLE DE v1.10 - validee
+par test retrospectif log-loss/Brier (94% de fenetres gagnantes,
+contre 56% en ROI seul, trop bruite comme critere de selection sur ce
+signal precis). L'entropie de Shannon d'une course depend des probas
+de TOUS ses chevaux, qu'on ne connait qu'apres un premier calcul -
+d'ou une restructuration en DEUX PASSES par course :
+1) Premiere passe (dans la boucle "for p in participants") : calcule
+   les probas preliminaires de TOUS les chevaux valides via le modele
+   A (modele_v110_A_production.json, 11 variables standard, SANS
+   entropie) - stockees dans candidats_v110_stage1, aucune detection
+   de pari n'est faite a ce stade.
+2) Apres la boucle : calcule l'entropie de la course a partir de ces
+   probas preliminaires, puis une SECONDE boucle sur
+   candidats_v110_stage1 calcule la proba FINALE (modele_v110_production.json,
+   12 variables, avec entropie) et fait toute la detection de paris
+   qui etait auparavant faite en une seule passe (value_bets_v110,
+   v110recalibre, v110d4, v110sniper, v110place, toutes_probas_v110).
+Le modele PLACE (candidats_place) reste dans la PREMIERE passe,
+inchange - il n'utilise jamais l'entropie.
 =============================================================================
 """
 
@@ -45,6 +56,8 @@ from commun import (
     charger_json, sauvegarder_json, envoyer_telegram,
     calculer_proba_avec_contributions, calculer_proba_v18_avec_contributions,
     calculer_proba_v110_ou_place_avec_contributions,
+    calculer_proba_v110_A, calculer_entropie_course,
+    calculer_proba_v110_avec_entropie_et_contributions,
     get_driver_forme, get_biais_hippodrome, get_speed_figure_avant_course,
     get_ecart_corde, extraire_cote_directe, extraire_deferre_4_pieds,
     extraire_age, extraire_indicateur_femelle, extraire_taux_victoire_carriere,
@@ -62,11 +75,11 @@ SEUIL_EV = 0.10
 FENETRE_MIN_MINUTES = 15
 FENETRE_MAX_MINUTES = 40
 SEUIL_OUTSIDER_DUTCHING = 8.0
-SEUIL_PROBA_SNIPER = 0.45  # v110sniper, backtest n=966, taux_victoire=50.7%, ROI=+20.27%, croissance=+76.2%/an, drawdown=9.4%
-SEUIL_COTE_FAVORI_ANTIFAV = 2.5  # NOUVEAU (27 aout) : strategie v110antifav - exclut les courses ou le favori du marche est ecrase (cote<2.5), backtest n=26824 (sur 34379), ROI=+26.55%, croissance=+2093.7%/an, drawdown=18.7% (contre +1994.4%/22.7% sans filtre) - confirmation acceleree n=775, jours=25
-SEUIL_ENTROPIE_BASSE = 1.30  # NOUVEAU (28 aout) : strategie v110snipercombine - entropie de Shannon <= P25 (course "lisible") ET proba>=45% (SEUIL_PROBA_SNIPER), backtest n=273, ROI=+32.38%, croissance=+39.7%/an, drawdown=7.4% (meilleur profil rendement/risque par pari trouve a ce jour)
-SEUIL_ECART_FAIBLE = 0.055  # NOUVEAU (30 aout) : strategie v110ecartfaible - joue le rang 2 de v1.10 (EV>10% deja requis) quand l'ecart de proba avec le rang 1 est <= P25, backtest n=1882, ROI=+32.58%, croissance=+149.8%/an, drawdown=24.3%
-PLAFOND_EXPOSITION_CHEVAL = 300  # NOUVEAU (16 sept) : exposition maximale (EUR, toutes strategies confondues) sur un meme "cheval" (ou combinaison identique pour les paris combines) dans une meme course - au-dela, les mises sont reduites proportionnellement
+SEUIL_PROBA_SNIPER = 0.45
+SEUIL_COTE_FAVORI_ANTIFAV = 2.5
+SEUIL_ENTROPIE_BASSE = 1.30
+SEUIL_ECART_FAIBLE = 0.055
+PLAFOND_EXPOSITION_CHEVAL = 300
 
 
 def recuperer_programme_du_jour(date_str):
@@ -145,6 +158,7 @@ def main():
     modele_v14 = charger_json(f"{RACINE}/modele_v14.json")
     modele_v15 = charger_json(f"{RACINE}/modele_v15.json")
     modele_v18 = charger_json(f"{RACINE}/modele_v18_production.json")
+    modele_v110_A = charger_json(f"{RACINE}/modele_v110_A_production.json")
     modele_v110 = charger_json(f"{RACINE}/modele_v110_production.json")
     modele_place = charger_json(f"{RACINE}/modele_place_v1_production.json")
     modele_2favori = charger_json(f"{RACINE}/modele_deuxieme_favori_v2_production.json")
@@ -234,6 +248,7 @@ def main():
         candidats_place = []
         toutes_probas_v110 = []
         partants_avec_cote = []
+        candidats_v110_stage1 = []  # NOUVEAU (17 sept) : premiere passe, avant calcul entropie
 
         for p in participants:
             if p.get("statut") != "PARTANT":
@@ -365,42 +380,72 @@ def main():
                     "taux_victoire_carriere": taux_victoire_carriere,
                 }
 
-                proba110, contrib110 = calculer_proba_v110_ou_place_avec_contributions(valeurs_communes, modele_v110)
-                if proba110 is not None:
-                    if num_pmu_cheval is not None:
-                        toutes_probas_v110.append((cheval, num_pmu_cheval, proba110))
-
-                    ev110 = proba110 * cote - 1
-                    if ev110 > SEUIL_EV:
-                        mise110 = calculer_mise_v110(proba110, cote, bankroll_v110, deferre_4_pieds)
-                        if mise110 > 0:
-                            value_bets_v110.append((cheval, cote, proba110, ev110, mise110, deferre_4_pieds))
-
-                        proba110_calibree = appliquer_calibration(table_calibration, "v110", proba110)
-                        ev110_calibre = proba110_calibree * cote - 1
-                        if ev110_calibre > SEUIL_EV:
-                            mise110recalibre = calculer_mise_v110(proba110_calibree, cote, bankroll_v110recalibre, deferre_4_pieds)
-                            if mise110recalibre > 0:
-                                value_bets_v110recalibre.append((cheval, cote, proba110_calibree, ev110_calibre, mise110recalibre, deferre_4_pieds))
-
-                        historique_deferrage = get_deferre_precedent(etat_deferrage, cheval)
-                        if detecter_changement_vers_d4(historique_deferrage, deferre_4_pieds):
-                            mise110d4 = calculer_mise_v110(proba110, cote, bankroll_v110d4, deferre_4_pieds)
-                            if mise110d4 > 0:
-                                value_bets_v110d4.append((cheval, cote, proba110, ev110, mise110d4))
-
-                        if proba110 >= SEUIL_PROBA_SNIPER:
-                            mise110sniper = calculer_mise_v110(proba110, cote, bankroll_v110sniper, deferre_4_pieds)
-                            if mise110sniper > 0:
-                                value_bets_v110sniper.append((cheval, cote, proba110, ev110, mise110sniper))
-
-                        mise110place = calculer_mise_v110(proba110, cote, bankroll_v110place, deferre_4_pieds)
-                        if mise110place > 0:
-                            value_bets_v110place.append((cheval, cote, proba110, ev110, mise110place, num_pmu_cheval))
+                # --- NOUVEAU (17 sept) : PREMIERE PASSE - proba preliminaire (modele A,
+                # 11 var, SANS entropie) - sert uniquement a calculer l'entropie de la
+                # course apres la boucle. Aucune detection de pari ici. ---
+                proba_A = calculer_proba_v110_A(valeurs_communes, modele_v110_A)
+                if proba_A is not None:
+                    candidats_v110_stage1.append({
+                        "cheval": cheval, "cote": cote, "num_pmu": num_pmu_cheval,
+                        "deferre_4_pieds": deferre_4_pieds,
+                        "valeurs_communes": valeurs_communes, "proba_A": proba_A,
+                    })
 
                 proba_place, contrib_place = calculer_proba_v110_ou_place_avec_contributions(valeurs_communes, modele_place)
                 if proba_place is not None:
                     candidats_place.append((cheval, proba_place, cote))
+
+        # ---------------------------------------------------------------
+        # NOUVEAU (17 sept) : SECONDE PASSE - entropie de la course
+        # calculee a partir des probas preliminaires (modele A), puis
+        # proba FINALE de chaque cheval (modele v1.10 a 12 variables,
+        # avec entropie) et toute la detection de paris v1.10 qui
+        # etait auparavant faite en une seule passe.
+        # ---------------------------------------------------------------
+        entropie_valeur = calculer_entropie_course([item["proba_A"] for item in candidats_v110_stage1])
+
+        for item in candidats_v110_stage1:
+            cheval = item["cheval"]
+            cote = item["cote"]
+            num_pmu_cheval = item["num_pmu"]
+            deferre_4_pieds = item["deferre_4_pieds"]
+            valeurs_avec_entropie = dict(item["valeurs_communes"])
+            valeurs_avec_entropie["entropie"] = entropie_valeur
+
+            proba110, contrib110 = calculer_proba_v110_avec_entropie_et_contributions(valeurs_avec_entropie, modele_v110)
+            if proba110 is None:
+                continue
+
+            if num_pmu_cheval is not None:
+                toutes_probas_v110.append((cheval, num_pmu_cheval, proba110))
+
+            ev110 = proba110 * cote - 1
+            if ev110 > SEUIL_EV:
+                mise110 = calculer_mise_v110(proba110, cote, bankroll_v110, deferre_4_pieds)
+                if mise110 > 0:
+                    value_bets_v110.append((cheval, cote, proba110, ev110, mise110, deferre_4_pieds))
+
+                proba110_calibree = appliquer_calibration(table_calibration, "v110", proba110)
+                ev110_calibre = proba110_calibree * cote - 1
+                if ev110_calibre > SEUIL_EV:
+                    mise110recalibre = calculer_mise_v110(proba110_calibree, cote, bankroll_v110recalibre, deferre_4_pieds)
+                    if mise110recalibre > 0:
+                        value_bets_v110recalibre.append((cheval, cote, proba110_calibree, ev110_calibre, mise110recalibre, deferre_4_pieds))
+
+                historique_deferrage = get_deferre_precedent(etat_deferrage, cheval)
+                if detecter_changement_vers_d4(historique_deferrage, deferre_4_pieds):
+                    mise110d4 = calculer_mise_v110(proba110, cote, bankroll_v110d4, deferre_4_pieds)
+                    if mise110d4 > 0:
+                        value_bets_v110d4.append((cheval, cote, proba110, ev110, mise110d4))
+
+                if proba110 >= SEUIL_PROBA_SNIPER:
+                    mise110sniper = calculer_mise_v110(proba110, cote, bankroll_v110sniper, deferre_4_pieds)
+                    if mise110sniper > 0:
+                        value_bets_v110sniper.append((cheval, cote, proba110, ev110, mise110sniper))
+
+                mise110place = calculer_mise_v110(proba110, cote, bankroll_v110place, deferre_4_pieds)
+                if mise110place > 0:
+                    value_bets_v110place.append((cheval, cote, proba110, ev110, mise110place, num_pmu_cheval))
 
         diag["valides_pour_place"] = len(candidats_place)
         chemin_diag = f"{RACINE}/diagnostic_couverture.csv"
@@ -566,8 +611,8 @@ def main():
             somme_probas = sum(probas_norm)
             if somme_probas > 0:
                 probas_norm = [p / somme_probas for p in probas_norm]
-                entropie_course = -sum(p * math.log(p) for p in probas_norm if p > 0)
-                if entropie_course <= SEUIL_ENTROPIE_BASSE:
+                entropie_course_snipercombine = -sum(p * math.log(p) for p in probas_norm if p > 0)
+                if entropie_course_snipercombine <= SEUIL_ENTROPIE_BASSE:
                     for item in value_bets_v110:
                         cheval_v110, cote_v110, proba_v110, ev_v110, deferre_v110 = item[0], item[1], item[2], item[3], item[5]
                         if proba_v110 >= SEUIL_PROBA_SNIPER:
@@ -811,19 +856,6 @@ def main():
         for cheval, cote, proba, ev, mise in value_bets_2favori:
             lignes_course.append({"race_id": race_id, "modele": "2favori", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
 
-        # ---------------------------------------------------------------
-        # NOUVEAU (16 sept) : LIMITE D'EXPOSITION GLOBALE PAR CHEVAL.
-        # Toutes les strategies de cette course ont maintenant propose
-        # leur mise independamment. Avant d'ecrire dans le journal,
-        # on regroupe par "cheval" (ou combinaison identique pour les
-        # paris combines type dutch/2sur4/trio/multi/couple_harville,
-        # dont le champ "cheval" contient deja une chaine composite
-        # distincte des simples noms de chevaux, donc naturellement
-        # comptee a part) et on REDUIT PROPORTIONNELLEMENT les mises
-        # si l'exposition totale depasse PLAFOND_EXPOSITION_CHEVAL -
-        # jamais de rejet complet, pour preserver l'information
-        # statistique de chaque strategie individuelle.
-        # ---------------------------------------------------------------
         exposition_par_cheval = {}
         for ligne in lignes_course:
             cle = ligne["cheval"]
