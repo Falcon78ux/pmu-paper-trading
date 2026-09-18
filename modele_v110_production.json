@@ -1,0 +1,54 @@
+{
+  "coefficients": {
+    "const": 0.6966157705514322,
+    "sf_std": 0.06294295520078179,
+    "log_cote": -1.2469397400704763,
+    "driver_std": 0.08002873984401235,
+    "hippo_std": 0.0622689617963134,
+    "interaction_sf_driver": -0.01809365986137485,
+    "nb_partants_std": 0.0297624318985655,
+    "ecart_corde_std": 0.015279311362479762,
+    "deferre_4_pieds": 0.11619907233596594,
+    "age_std": -0.08972286382623795,
+    "indicateur_femelle": -0.05641358554583189,
+    "taux_victoire_std": 0.013197302336674445,
+    "entropie_std": -0.09079834286597276
+  },
+  "normalisation": {
+    "speed_figure_avant_course": {
+      "moyenne": -132.7590260014471,
+      "ecart_type": 802.4401190031836
+    },
+    "driver_forme": {
+      "moyenne": 0.08513776081703417,
+      "ecart_type": 0.061539541516185126
+    },
+    "biais_hippodrome": {
+      "moyenne": 0.0038817344802350756,
+      "ecart_type": 0.004619352060148607
+    },
+    "nb_partants_course": {
+      "moyenne": 11.870006213234998,
+      "ecart_type": 6.752437235926575
+    },
+    "ecart_corde": {
+      "moyenne": 17.50310863478282,
+      "ecart_type": 409.4941700770891
+    },
+    "age": {
+      "moyenne": 5.516061615925247,
+      "ecart_type": 1.8601712903140961
+    },
+    "taux_victoire_carriere": {
+      "moyenne": 0.11714017229883626,
+      "ecart_type": 0.11764437253076453
+    },
+    "entropie": {
+      "moyenne": 1.671795751023929,
+      "ecart_type": 0.44144141036533147
+    }
+  },
+  "nb_lignes_entrainement": 123929,
+  "date_export": "2026-09-16",
+  "note": "12e variable = entropie de Shannon de la course, calculee via modele_v110_A_production.json applique a tous les chevaux de la course (evite la circularite)"
+}
