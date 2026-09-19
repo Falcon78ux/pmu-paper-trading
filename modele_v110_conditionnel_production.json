@@ -1,0 +1,40 @@
+{
+  "coefficients": {
+    "sf_std": 0.08236030847791792,
+    "log_cote": -1.0573962286844272,
+    "driver_std": 0.10087405043017755,
+    "interaction_sf_driver": -0.03354413247172822,
+    "ecart_corde_std": 0.018916917080327625,
+    "deferre_4_pieds": 0.14294056089720167,
+    "age_std": -0.19210046491939023,
+    "indicateur_femelle": -0.10185111507748261,
+    "taux_victoire_std": 0.03011455352844631
+  },
+  "normalisation": {
+    "speed_figure_avant_course": {
+      "moyenne": -116.4798059210627,
+      "ecart_type": 780.4608919072691
+    },
+    "driver_forme": {
+      "moyenne": 0.08530747746378323,
+      "ecart_type": 0.06073004286164135
+    },
+    "ecart_corde": {
+      "moyenne": 17.575073024805445,
+      "ecart_type": 413.5241839399105
+    },
+    "age": {
+      "moyenne": 5.594714628561971,
+      "ecart_type": 1.8407391452116773
+    },
+    "taux_victoire_carriere": {
+      "moyenne": 0.12031921503709281,
+      "ecart_type": 0.11655699041173294
+    }
+  },
+  "nb_lignes_entrainement": 108753,
+  "nb_courses_entrainement": 12765,
+  "date_export": "2026-09-19",
+  "type_modele": "logit_conditionnel_softmax_intracourse",
+  "note": "AUCUNE constante (s'annule sous softmax par construction). Probabilite calculee par softmax des scores lineaires de TOUS les chevaux de la course (voir calculer_proba_conditionnel_course dans commun.py) - PAS un sigmoid independant par cheval. Deploiement en DOUBLE LOGGING : ce modele mise reellement, modele_v110_production.json (sigmoid, 12 var, avec entropie) reste actif comme reference de comparaison, ne mise plus mais continue d'etre calcule et loggue."
+}
