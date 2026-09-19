@@ -40,6 +40,19 @@ CADUQUE pour le vrai v1.10 (ces 3 variables sont constantes par
 course, inertes sous softmax par construction - testees en
 interaction le 19 sept, sans effet) - mais reste calculee pour le
 chemin sigmoid de reference, qui l'utilise toujours.
+
+NOUVEAU (19 sept, suite) : REMPLACEMENT DIRECT (pas de double logging
+- changement de source d'UNE variable, pas d'architecture) de
+driver_forme par un RATING ELO (get_elo_driver, etat_elo_drivers.json)
+comme source de driver_std dans le logit conditionnel UNIQUEMENT.
+Valide par walk-forward le 19 sept : Elo bat driver_forme sur 14/16
+fenetres en Brier (88%), 15/16 en log-loss (94%), 13/16 en ROI (81%).
+Le chemin sigmoid de reference garde driver_forme sans changement (les
+deux valeurs coexistent dans valeurs_communes, chacune utilisee par
+son propre chemin). etat_elo_drivers.json doit etre MIS A JOUR par
+verifier_resultats.py apres chaque course resolue (maj_elo_course dans
+commun.py) - sans cette mise a jour, les ratings se figent au jour du
+bootstrap et l'avantage mesure en walk-forward s'erode avec le temps.
 =============================================================================
 """
 
@@ -60,7 +73,7 @@ from commun import (
     calculer_proba_v110_A, calculer_entropie_course,
     calculer_proba_v110_avec_entropie_et_contributions,
     calculer_probas_conditionnel_course,
-    get_driver_forme, get_biais_hippodrome, get_speed_figure_avant_course,
+    get_driver_forme, get_elo_driver, get_biais_hippodrome, get_speed_figure_avant_course,
     get_ecart_corde, extraire_cote_directe, extraire_deferre_4_pieds,
     extraire_age, extraire_indicateur_femelle, extraire_taux_victoire_carriere,
     get_dernier_rang, get_sire_forme, charger_table_pedigree,
@@ -148,6 +161,7 @@ def main():
     date_str = maintenant.strftime("%d%m%Y")
 
     etat_drivers = charger_json(f"{RACINE}/etat_drivers.json", {})
+    etat_elo_drivers = charger_json(f"{RACINE}/etat_elo_drivers.json", {"ratings": {}, "games_played": {}})
     etat_hippodromes = charger_json(f"{RACINE}/etat_hippodromes.json", {})
     etat_chevaux = charger_json(f"{RACINE}/etat_chevaux.json", {})
     etat_chevaux_corde = charger_json(f"{RACINE}/etat_chevaux_corde.json", {})
@@ -286,6 +300,7 @@ def main():
             cote = extraire_cote_directe(p)
             sf_avant = get_speed_figure_avant_course(etat_chevaux, cheval)
             driver_forme = get_driver_forme(etat_drivers, driver)
+            elo_driver_avant = get_elo_driver(etat_elo_drivers, driver)
             biais_hippo = get_biais_hippodrome(etat_hippodromes, course["hippodrome"])
 
             if cote is None or cote <= 1:
@@ -399,7 +414,8 @@ def main():
 
                 valeurs_communes = {
                     "speed_figure_avant_course": sf_avant, "log_cote": log_cote,
-                    "driver_forme": driver_forme, "biais_hippodrome": biais_hippo,
+                    "driver_forme": driver_forme, "elo_driver_avant": elo_driver_avant,
+                    "biais_hippodrome": biais_hippo,
                     "nb_partants_course": nb_partants_course, "ecart_corde": ecart_corde,
                     "deferre_4_pieds": deferre_4_pieds, "age": age,
                     "indicateur_femelle": indicateur_femelle,
