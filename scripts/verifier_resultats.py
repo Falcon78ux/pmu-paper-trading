@@ -874,7 +874,7 @@ def main():
                 "detail_incoherence": detail, "date_verif": datetime.now(timezone.utc).isoformat(),
             })
 
-            if not (cle_pause and etat_pause.get(cle_pause, False)):
+            if bankroll_apres is not None and not (cle_pause and etat_pause.get(cle_pause, False)):
                 emoji = "✅" if gagnant else "❌"
                 lignes_message.append(
                     f"{emoji} [{l['modele']}] {cheval_parie} (cote {cote:.1f}, mise {mise:.2f}EUR) "
