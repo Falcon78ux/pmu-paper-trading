@@ -35,7 +35,7 @@ import requests
 sys.path.insert(0, os.path.dirname(__file__))
 from commun import (
     charger_json, sauvegarder_json, envoyer_telegram,
-    maj_driver, maj_hippodrome, maj_cheval, maj_cheval_corde,
+    maj_driver, maj_elo_course, maj_hippodrome, maj_cheval, maj_cheval_corde,
     maj_dernier_rang, maj_sire_forme, charger_table_pedigree,
     get_bankroll, mettre_a_jour_bankroll, extraire_cote_directe,
     maj_deferrage, extraire_deferre_4_pieds,
@@ -188,6 +188,7 @@ def ecrire_audit(ligne_audit):
 def main():
     courses_notifiees = charger_json(f"{RACINE}/courses_notifiees.json", {})
     etat_drivers = charger_json(f"{RACINE}/etat_drivers.json", {})
+    etat_elo_drivers = charger_json(f"{RACINE}/etat_elo_drivers.json", {"ratings": {}, "games_played": {}})
     etat_hippodromes = charger_json(f"{RACINE}/etat_hippodromes.json", {})
     etat_chevaux = charger_json(f"{RACINE}/etat_chevaux.json", {})
     etat_chevaux_corde = charger_json(f"{RACINE}/etat_chevaux_corde.json", {})
@@ -339,6 +340,7 @@ def main():
 
             somme_ecart_course = 0.0
             nb_partants_course = 0
+            drivers_courses_elo = []
             for p in participants:
                 if p.get("statut") == "PARTANT":
                     maj_deferrage(etat_deferrage, p.get("nom"), extraire_deferre_4_pieds(p))
@@ -350,6 +352,7 @@ def main():
                 driver = p.get("driver") or p.get("entraineur")
                 if driver:
                     maj_driver(etat_drivers, driver, gagnant)
+                    drivers_courses_elo.append((driver, rang))
 
                 maj_dernier_rang(etat_dernier_rang, p.get("nom"), rang)
 
@@ -368,6 +371,8 @@ def main():
 
             if nb_partants_course > 0 and hippodrome_nom:
                 maj_hippodrome(etat_hippodromes, hippodrome_nom, somme_ecart_course, nb_partants_course)
+
+            maj_elo_course(etat_elo_drivers, drivers_courses_elo)
 
             etat_courses_maj_signal[race_id] = True
 
@@ -925,6 +930,7 @@ def main():
     mettre_a_jour_bankroll(chemin_bankroll_v110ecartfaible, bankroll_v110ecartfaible)
 
     sauvegarder_json(f"{RACINE}/etat_drivers.json", etat_drivers)
+    sauvegarder_json(f"{RACINE}/etat_elo_drivers.json", etat_elo_drivers)
     sauvegarder_json(f"{RACINE}/etat_hippodromes.json", etat_hippodromes)
     sauvegarder_json(f"{RACINE}/etat_chevaux.json", etat_chevaux)
     sauvegarder_json(f"{RACINE}/etat_chevaux_corde.json", etat_chevaux_corde)
