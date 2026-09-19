@@ -29,6 +29,16 @@ nb_partants_course et entropie sont CONSTANTES par course, donc
 INERTES sous softmax par construction - testees en interaction le 19
 sept, sans effet). AUCUNE constante dans ce modele (s'annule sous
 softmax).
+
+NOUVEAU (19 sept, suite) : driver_std dans calculer_probas_conditionnel_course
+est desormais construit a partir d'un RATING ELO (etat_elo_drivers.json,
+get_elo_driver/maj_elo_course ci-dessous) et non plus de driver_forme
+(fenetre glissante 100 courses) - remplacement direct, valide par
+walk-forward le 19 sept (14/16 Brier, 15/16 log-loss, 13/16 ROI). Le
+sigmoid de reference (calculer_proba_v110_avec_entropie_et_contributions,
+calculer_proba_v110_A) continue d'utiliser driver_forme/get_driver_forme
+sans changement - c'est une reference figee, pas concernee par ce
+remplacement.
 =============================================================================
 """
 
@@ -230,6 +240,58 @@ def maj_driver(etat_drivers, driver, victoire):
     historique = etat_drivers.get(driver, [])
     historique.append(victoire)
     etat_drivers[driver] = historique[-FENETRE_DRIVER:]
+
+
+ELO_DEFAUT = 1500.0
+ELO_K_DEBUTANT = 32.0
+ELO_K_CONFIRME = 16.0
+ELO_SEUIL_CONFIRME = 30  # nombre de courses avant de passer a K=16
+
+
+def get_elo_driver(etat_elo, driver):
+    """Rating Elo actuel du driver (avant la prochaine course), ou
+    ELO_DEFAUT si le driver est absent de l'etat (nouveau ou jamais vu
+    dans une course trot). Ne retourne jamais None - contrairement a
+    get_driver_forme, l'Elo n'a pas de minimum d'historique requis
+    (ELO_DEFAUT sert de point de depart neutre)."""
+    return etat_elo.get("ratings", {}).get(driver, ELO_DEFAUT)
+
+
+def maj_elo_course(etat_elo, drivers_courses):
+    """NOUVEAU (19 sept) : met a jour les ratings Elo de TOUS les
+    drivers d'une course resolue, en une seule fois (Elo multi-joueurs
+    - chaque driver compare a TOUS les autres via le rang d'arrivee
+    reel, pas seulement au vainqueur). Meme formule que le script de
+    calibration/entrainement (TROT_elo_glicko_driver.py,
+    TROT_entrainement_v110_elo.py) - a garder synchronisee si la
+    formule change un jour.
+
+    drivers_courses : liste de tuples (driver, rang_arrivee) pour tous
+    les partants de la course (rang_arrivee : entier >=1, non-partants
+    et disqualifies deja exclus par l'appelant). Modifie etat_elo en
+    place (dict avec cles "ratings" et "games_played")."""
+    n = len(drivers_courses)
+    if n < 2:
+        return
+    ratings = etat_elo.setdefault("ratings", {})
+    games = etat_elo.setdefault("games_played", {})
+
+    noms = [d for d, _ in drivers_courses]
+    rangs = np.array([r for _, r in drivers_courses], dtype=float)
+    R = np.array([ratings.get(d, ELO_DEFAUT) for d in noms])
+    K = np.array([ELO_K_DEBUTANT if games.get(d, 0) < ELO_SEUIL_CONFIRME else ELO_K_CONFIRME for d in noms])
+
+    Ri = R[:, None]
+    Rj = R[None, :]
+    expected = 1.0 / (1.0 + 10 ** ((Rj - Ri) / 400.0))
+    actual = (rangs[:, None] < rangs[None, :]).astype(float) + 0.5 * (rangs[:, None] == rangs[None, :]).astype(float)
+    np.fill_diagonal(expected, 0.0)
+    np.fill_diagonal(actual, 0.0)
+    delta = K * (actual.sum(axis=1) - expected.sum(axis=1)) / (n - 1)
+
+    for i, d in enumerate(noms):
+        ratings[d] = float(R[i] + delta[i])
+        games[d] = games.get(d, 0) + 1
 
 
 def get_biais_hippodrome(etat_hippodromes, hippodrome):
@@ -739,7 +801,7 @@ def calculer_probas_conditionnel_course(liste_valeurs_par_cheval, modele):
     Retourne une liste vide si aucun cheval n'est valide."""
     coefs = modele["coefficients"]
     norm = modele["normalisation"]
-    requis = ["speed_figure_avant_course", "driver_forme", "ecart_corde", "age", "taux_victoire_carriere"]
+    requis = ["speed_figure_avant_course", "elo_driver_avant", "ecart_corde", "age", "taux_victoire_carriere"]
 
     def std(var, valeurs_brutes):
         m = norm[var]["moyenne"]
@@ -753,7 +815,7 @@ def calculer_probas_conditionnel_course(liste_valeurs_par_cheval, modele):
             continue
 
         sf_std = std("speed_figure_avant_course", valeurs_brutes)
-        driver_std = std("driver_forme", valeurs_brutes)
+        driver_std = std("elo_driver_avant", valeurs_brutes)
         ecart_corde_std = std("ecart_corde", valeurs_brutes)
         age_std = std("age", valeurs_brutes)
         taux_victoire_std = std("taux_victoire_carriere", valeurs_brutes)
