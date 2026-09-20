@@ -1,40 +1,40 @@
 {
   "coefficients": {
-    "sf_std": 0.08236030847791792,
-    "log_cote": -1.0573962286844272,
-    "driver_std": 0.10087405043017755,
-    "interaction_sf_driver": -0.03354413247172822,
-    "ecart_corde_std": 0.018916917080327625,
-    "deferre_4_pieds": 0.14294056089720167,
-    "age_std": -0.19210046491939023,
-    "indicateur_femelle": -0.10185111507748261,
-    "taux_victoire_std": 0.03011455352844631
+    "sf_std": 0.09032852092745547,
+    "log_cote": -1.0171325385881267,
+    "driver_std": 0.1996884188717938,
+    "interaction_sf_driver": -0.030582503888634736,
+    "ecart_corde_std": 0.018312546153575956,
+    "deferre_4_pieds": 0.16038322368234445,
+    "age_std": -0.19739004149805917,
+    "indicateur_femelle": -0.11171171398185416,
+    "taux_victoire_std": 0.03825130042871844
   },
   "normalisation": {
     "speed_figure_avant_course": {
-      "moyenne": -116.4798059210627,
-      "ecart_type": 780.4608919072691
+      "moyenne": -134.69491836508848,
+      "ecart_type": 792.5846720123532
     },
-    "driver_forme": {
-      "moyenne": 0.08530747746378323,
-      "ecart_type": 0.06073004286164135
+    "elo_driver_avant": {
+      "moyenne": 1570.8589216470637,
+      "ecart_type": 95.34477037952828
     },
     "ecart_corde": {
-      "moyenne": 17.575073024805445,
-      "ecart_type": 413.5241839399105
+      "moyenne": 17.606759003592533,
+      "ecart_type": 407.96643767926184
     },
     "age": {
-      "moyenne": 5.594714628561971,
-      "ecart_type": 1.8407391452116773
+      "moyenne": 5.6690607869017065,
+      "ecart_type": 1.8537985090171325
     },
     "taux_victoire_carriere": {
-      "moyenne": 0.12031921503709281,
-      "ecart_type": 0.11655699041173294
+      "moyenne": 0.11677721043947856,
+      "ecart_type": 0.11372336495497624
     }
   },
-  "nb_lignes_entrainement": 108753,
-  "nb_courses_entrainement": 12765,
-  "date_export": "2026-09-19",
+  "nb_lignes_entrainement": 123497,
+  "nb_courses_entrainement": 13597,
+  "date_export": "2026-09-20",
   "type_modele": "logit_conditionnel_softmax_intracourse",
-  "note": "AUCUNE constante (s'annule sous softmax par construction). Probabilite calculee par softmax des scores lineaires de TOUS les chevaux de la course (voir calculer_proba_conditionnel_course dans commun.py) - PAS un sigmoid independant par cheval. Deploiement en DOUBLE LOGGING : ce modele mise reellement, modele_v110_production.json (sigmoid, 12 var, avec entropie) reste actif comme reference de comparaison, ne mise plus mais continue d'etre calcule et loggue."
+  "note": "AUCUNE constante (s'annule sous softmax par construction). driver_std est desormais standardise a partir du rating ELO du driver (trot uniquement, multi-joueurs, cf etat_elo_drivers.json) et NON PLUS de driver_forme (fenetre glissante 100 courses). Cle de normalisation renommee speed_figure_avant_course/elo_driver_avant en consequence - le reste du schema (coefficients, interaction_sf_driver) est inchange. Walk-forward de validation (19 sept) : Elo bat driver_forme sur 14/16 Brier, 15/16 log-loss, 13/16 ROI."
 }
