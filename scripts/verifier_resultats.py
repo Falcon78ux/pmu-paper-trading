@@ -28,6 +28,7 @@ verification systematique des fichiers est en place.
 import sys
 import os
 import csv
+import math
 from datetime import datetime, timezone
 
 import requests
@@ -61,6 +62,102 @@ CHAMPS_AUDIT = [
     "top4_reel", "combinaison_rapport_brute", "cote_utilisee", "gain_calcule",
     "resultat", "coherence_verifiee", "detail_incoherence", "date_verif",
 ]
+
+# =============================================================================
+# SPRT EN PRODUCTION (20 sept, nuit) - detection automatique de strategie
+# defaillante, valide en retrospectif le meme soir (v1.4-Dutch flague 8
+# jours avant sa decouverte manuelle, place flague ~7 semaines avant).
+# Etat persistant dans etat_sprt.json, mis a jour ICI (une seule fois,
+# de facon centralisee, apres la reecriture du CSV) plutot que disperse
+# dans chaque branche de resolution - identifie les lignes resolues CE
+# RUN via race_id in courses_traitees_ce_run (deja suivi par le code
+# existant), sans toucher aux ~13 points d'assignation de "resultat".
+#
+# DEMARRAGE VOLONTAIREMENT A ZERO (pas de rejeu retrospectif de tout
+# l'historique) : sinon 16 alertes tombent d'un coup au premier run
+# pour des problemes deja corriges le 20 sept. Ce mecanisme surveille
+# la DEGRADATION FUTURE, pas le passe deja traite a la main.
+#
+# Meme table que commandes_telegram.py (CORRIGEE le 20 sept, nuit - voir
+# la meme note dans REFERENCE_BACKTEST de commandes_telegram.py) -
+# dupliquee ici volontairement, meme convention que suivi_hebdomadaire.py
+# ("pour eviter toute dependance croisee entre scripts").
+# =============================================================================
+REFERENCE_BACKTEST_SPRT = {
+    "v14": 0.1075, "v14dutch": 0.1124, "v14favori": 0.2789, "v14sire": 0.1176,
+    "v15": 0.1391, "v18": 0.1556,
+    "v110": 0.1879, "v110dutch": 0.2319, "v110favori": 0.3584, "v110d4": 0.5183,
+    "v110sniper": 0.2027, "v110place": 0.1913, "v110antifav": 0.2655,
+    "v110snipercombine": 0.3238, "v110ecartfaible": 0.3258,
+    "v14recalibre": -0.0266, "v15recalibre": 0.0412, "v18recalibre": 0.0518, "v110recalibre": -0.0395,
+    "consensus_place": 0.3738, "couple_harville": 0.7088,
+    "place": 0.2312, "2sur4": 0.4524, "trio": 1.4406, "multi": -0.3967, "2favori": 0.3514,
+}
+NOMS_AFFICHAGE_SPRT = {
+    "v14": "v1.4", "v14dutch": "v1.4-Dutch", "v14favori": "v1.4-Favori", "v14sire": "v1.4+Genealogie",
+    "v15": "v1.5", "v18": "v1.8",
+    "v110": "v1.10", "v110dutch": "v1.10-Dutch", "v110favori": "v1.10-Favori", "v110d4": "v1.10-D4",
+    "v110sniper": "v1.10-Sniper", "v110place": "v1.10-Place", "v110antifav": "v1.10-AntiFav",
+    "v110snipercombine": "v1.10-SniperCombine", "v110ecartfaible": "v1.10-EcartFaible",
+    "v14recalibre": "v1.4-Recalibre", "v15recalibre": "v1.5-Recalibre", "v18recalibre": "v1.8-Recalibre",
+    "v110recalibre": "v1.10-Recalibre", "consensus_place": "Consensus-Place", "couple_harville": "Couple-Harville",
+    "place": "place", "2sur4": "2sur4", "trio": "trio", "multi": "multi", "2favori": "2favori",
+}
+# l["modele"] stocke le nom d'AFFICHAGE pour les 4 modeles de base
+# uniquement (v1.4/v1.5/v1.8/v1.10) - tous les autres utilisent deja
+# leur cle canonique directement (meme convention que commandes_telegram.py).
+REVERSE_CLE_SPRT = {"v1.4": "v14", "v1.5": "v15", "v1.8": "v18", "v1.10": "v110"}
+
+SPRT_ALPHA = 0.05
+SPRT_BETA = 0.10
+SPRT_A = math.log((1 - SPRT_BETA) / SPRT_ALPHA)
+SPRT_B = math.log(SPRT_BETA / (1 - SPRT_ALPHA))
+SPRT_BURN_IN = 30
+SPRT_MU0 = 0.0
+
+
+def cle_canonique_sprt(nom_modele_csv):
+    return REVERSE_CLE_SPRT.get(nom_modele_csv, nom_modele_csv)
+
+
+def maj_sprt_une_ligne(etat_sprt, cle, x):
+    """Met a jour l'etat SPRT d'UNE strategie avec UN nouveau retour x
+    (gain_euros/mise). Ne fait rien si la strategie a deja un statut
+    fige (MORTE ou VIVANTE - le test de Wald s'arrete des qu'un seuil
+    est franchi). Retourne True si le statut vient de changer ce coup-ci."""
+    if cle not in REFERENCE_BACKTEST_SPRT:
+        return False  # ex: v110_sigmoid_ref, jamais un vrai pari
+    entree = etat_sprt.setdefault(cle, {
+        "n": 0, "somme_x": 0.0, "somme_x2": 0.0, "llr": 0.0,
+        "statut": "SURVEILLANCE", "date_decision": None, "race_id_decision": None,
+    })
+    if entree["statut"] != "SURVEILLANCE":
+        return False
+
+    entree["n"] += 1
+    entree["somme_x"] += x
+    entree["somme_x2"] += x ** 2
+    if entree["n"] < SPRT_BURN_IN:
+        return False
+
+    n = entree["n"]
+    moyenne = entree["somme_x"] / n
+    variance = (entree["somme_x2"] - n * moyenne ** 2) / (n - 1)
+    if variance <= 0:
+        return False
+    sigma2 = variance
+    mu1 = REFERENCE_BACKTEST_SPRT[cle]
+    increment = (mu1 - SPRT_MU0) / sigma2 * x - (mu1 ** 2 - SPRT_MU0 ** 2) / (2 * sigma2)
+    entree["llr"] += increment
+
+    if entree["llr"] >= SPRT_A:
+        entree["statut"] = "VIVANTE"
+    elif entree["llr"] <= SPRT_B:
+        entree["statut"] = "MORTE"
+    else:
+        return False
+    entree["date_decision"] = datetime.now(timezone.utc).isoformat()
+    return True
 
 
 def recuperer_participants(date_str, num_reunion, num_course):
@@ -901,6 +998,48 @@ def main():
         writer.writeheader()
         for l in lignes:
             writer.writerow(l)
+
+    # -------------------------------------------------------------------
+    # SPRT (20 sept, nuit) - identifie les lignes resolues CE RUN via
+    # race_id in courses_traitees_ce_run (toutes les lignes en attente
+    # d'une course traitee ce run ont ete resolues, ou ANNULEes,
+    # ensemble - jamais partiellement). Une seule mise a jour centralisee,
+    # alerte Telegram uniquement sur un CHANGEMENT de statut ce run.
+    # -------------------------------------------------------------------
+    races_traitees_ce_run_set = set(courses_traitees_ce_run)
+    etat_sprt = charger_json(f"{RACINE}/etat_sprt.json", {})
+    changements_sprt = []
+    for l in lignes:
+        if l.get("race_id") not in races_traitees_ce_run_set:
+            continue
+        if l.get("resultat", "") == "":
+            continue
+        try:
+            mise = float(l.get("mise", 0) or 0)
+            gain = float(l.get("gain_euros", 0) or 0)
+        except (ValueError, TypeError):
+            continue
+        if mise <= 0:
+            continue
+        cle = cle_canonique_sprt(l.get("modele", ""))
+        a_change = maj_sprt_une_ligne(etat_sprt, cle, gain / mise)
+        if a_change:
+            changements_sprt.append((cle, etat_sprt[cle]["statut"], etat_sprt[cle]["n"]))
+
+    if changements_sprt:
+        lignes_alerte = ["🚨 <b>SPRT - changement de statut detecte</b>\n"]
+        for cle, statut, n in changements_sprt:
+            nom = NOMS_AFFICHAGE_SPRT.get(cle, cle)
+            if statut == "MORTE":
+                lignes_alerte.append(
+                    f"🔴 <b>{nom}</b> declaree MORTE apres {n} paris - plus d'edge detectable "
+                    f"par rapport au backtest de reference. Envisager /arreter {cle}."
+                )
+            else:
+                lignes_alerte.append(f"🟢 <b>{nom}</b> CONFIRMEE VIVANTE apres {n} paris - edge du backtest confirme.")
+        envoyer_telegram("\n".join(lignes_alerte))
+
+    sauvegarder_json(f"{RACINE}/etat_sprt.json", etat_sprt)
 
     mettre_a_jour_bankroll(chemin_bankroll_v14, bankroll_v14)
     mettre_a_jour_bankroll(chemin_bankroll_v14dutch, bankroll_v14dutch)
