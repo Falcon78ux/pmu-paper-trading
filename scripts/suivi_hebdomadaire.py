@@ -79,10 +79,14 @@ REFERENCE_BACKTEST = {
     "v110recalibre": {"n": 463, "roi": -0.0395},
     "consensus_place": {"n": 7811, "roi": 0.3738},
     "couple_harville": {"n": 16159, "roi": 0.7088},  # CORRIGE (26 aout), coherent avec commandes_telegram.py
-    "place": {"n": 16635, "roi": 0.2339},  # CORRIGE (25 aout), coherent avec commandes_telegram.py
-    "2sur4": {"n": 10312, "roi": 0.838},
-    "trio": {"n": 14993, "roi": 1.6530},  # CORRIGE (26 aout), coherent avec commandes_telegram.py
-    "multi": {"n": 6366, "roi": 1.9111},  # CORRIGE (25 aout), coherent avec commandes_telegram.py
+    # CORRIGE (20 sept, nuit) : "coherent avec commandes_telegram.py" ci-
+    # dessus visait la correction du 25/26 aout, elle-meme depassee le 20
+    # sept - TROT_verification_combines_vrais_rapports.py a recalcule ces
+    # 4 avec les vrais rapports PMU (13462 courses). multi etait
+    # ENTIEREMENT FICTIF (backtest recalcule = -39.67%, rejoint le direct
+    # a -35.0%) ; 2sur4/trio partiellement gonfles ; place quasi inchange.
+    "place": {"n": 13462, "roi": 0.2312}, "2sur4": {"n": 10796, "roi": 0.4524},
+    "trio": {"n": 12071, "roi": 1.4406}, "multi": {"n": 6784, "roi": -0.3967},
     "2favori": {"n": 3171, "roi": 0.3514},  # CORRIGE (25 aout), coherent avec commandes_telegram.py
 }
 
