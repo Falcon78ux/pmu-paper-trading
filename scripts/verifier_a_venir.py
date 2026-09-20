@@ -627,32 +627,49 @@ def main():
                     if mise_v14favori > 0:
                         value_bets_v14favori.append((cheval_v14, cote_v14, proba_v14, ev_v14, mise_v14favori))
 
+        # REVERT (20 sept) : un SEUL outsider par course (le mieux classe
+        # par EV), au lieu d'une paire dutch independante par outsider
+        # qualifie (correction du 22 aout). La version du 22 aout cree
+        # plusieurs paris CORRELES sur le meme favori au sein d'une meme
+        # course (meme evenement reel, repete), traites a tort comme des
+        # opportunites independantes par le calcul de mise Kelly de
+        # chaque paire - meme angle mort que le Kelly correle matriciel
+        # deja identifie comme piste a construire. Le plafond d'exposition
+        # du 16 sept limitait la mise totale sur le favori mais ne
+        # corrigeait pas la correlation sous-jacente. v1.4-Dutch etait
+        # hors IC95% avec une derive qui s'aggravait depuis la sortie du
+        # bruit - fenetre coherente avec les ~3 semaines (22 aout -> 16
+        # sept) sans aucun garde-fou sur cette exposition correlee.
         dutch_v14_liste = []
         dutch_v110_liste = []
         if partants_avec_cote:
             favori_marche_nom, cote_favori_marche = min(partants_avec_cote, key=lambda x: x[1])
-            for item in value_bets_v14:
-                cheval_out, cote_out, proba_out, ev_out, _ = item
-                if cote_out >= SEUIL_OUTSIDER_DUTCHING and cheval_out != favori_marche_nom:
-                    resultat = calculer_dutching(
-                        cheval_out, cote_out, proba_out, ev_out,
-                        favori_marche_nom, cote_favori_marche, bankroll_v14dutch,
-                        calculer_mise,
-                    )
-                    if resultat:
-                        dutch_v14_liste.append(resultat)
 
-            for item in value_bets_v110:
+            candidats_v14 = [item for item in value_bets_v14
+                              if item[1] >= SEUIL_OUTSIDER_DUTCHING and item[0] != favori_marche_nom]
+            if candidats_v14:
+                cheval_out, cote_out, proba_out, ev_out, _ = max(candidats_v14, key=lambda item: item[3])
+                resultat = calculer_dutching(
+                    cheval_out, cote_out, proba_out, ev_out,
+                    favori_marche_nom, cote_favori_marche, bankroll_v14dutch,
+                    calculer_mise,
+                )
+                if resultat:
+                    dutch_v14_liste.append(resultat)
+
+            candidats_v110 = [item for item in value_bets_v110
+                               if item[1] >= SEUIL_OUTSIDER_DUTCHING and item[0] != favori_marche_nom]
+            if candidats_v110:
+                item = max(candidats_v110, key=lambda x: x[3])
                 cheval_out, cote_out, proba_out, ev_out = item[0], item[1], item[2], item[3]
                 deferre_out = item[5]
-                if cote_out >= SEUIL_OUTSIDER_DUTCHING and cheval_out != favori_marche_nom:
-                    resultat = calculer_dutching(
-                        cheval_out, cote_out, proba_out, ev_out,
-                        favori_marche_nom, cote_favori_marche, bankroll_v110dutch,
-                        calculer_mise_v110, deferre_out,
-                    )
-                    if resultat:
-                        dutch_v110_liste.append(resultat)
+                resultat = calculer_dutching(
+                    cheval_out, cote_out, proba_out, ev_out,
+                    favori_marche_nom, cote_favori_marche, bankroll_v110dutch,
+                    calculer_mise_v110, deferre_out,
+                )
+                if resultat:
+                    dutch_v110_liste.append(resultat)
 
         couple_harville_pick = None
         if len(toutes_probas_v110) >= 2:
