@@ -141,8 +141,10 @@ TEXTE_AIDE = (
     "/bilan cumule — bilan depuis le debut\n"
     "/confiance — estimation combinee backtest+direct, par modele (detail complet)\n"
     "/clv — Closing Line Value moyen par modele (detail complet)\n"
-    "/pause [strategie|tout] — coupe les notifications (le pari continue en arriere-plan)\n"
-    "/reprendre [strategie|tout] — reactive les notifications\n"
+    "/pause [strategie|tout] — NIVEAU 1 : coupe les notifications (le pari continue en arriere-plan)\n"
+    "/reprendre [strategie|tout] — reactive les notifications (niveau 1)\n"
+    "/arreter [strategie|tout] — NIVEAU 2 : arrete reellement les nouveaux paris (plus aucun pari logge ni resolu)\n"
+    "/demarrer [strategie|tout] — reactive les nouveaux paris (niveau 2)\n"
     "/courses_restantes — courses de trot pas encore parties aujourd'hui\n"
     "/courses_non_jouees — courses passees sans aucun pari aujourd'hui\n"
     "/aide — cette liste"
@@ -1016,25 +1018,48 @@ def normaliser_cle_modele(argument):
     return None
 
 
-def traiter_pause(argument, mettre_en_pause):
-    etat_pause = charger_json(f"{RACINE}/etat_pause.json", {})
+def traiter_pause_generique(argument, activer, chemin_fichier_etat, emoji, verbe_action, verbe_inaction, texte_explicatif):
+    """Implementation partagee entre le niveau 1 (etat_pause.json,
+    notifications uniquement) et le niveau 2 (etat_arret.json, arrete
+    reellement les nouveaux paris - verifier_a_venir.py ne les logge
+    plus du tout dans paris_virtuels.csv, donc rien n'est jamais
+    resolu ni debite pour un modele arrete)."""
+    etat = charger_json(chemin_fichier_etat, {})
     if argument == "tout":
         for cle in MODELES:
-            etat_pause[cle] = mettre_en_pause
+            etat[cle] = activer
         cibles = "toutes les strategies"
     else:
         cle_trouvee = normaliser_cle_modele(argument)
         if not cle_trouvee:
             return f"Strategie '{argument}' inconnue. Utilise : {', '.join(NOMS_AFFICHAGE.values())} ou 'tout'."
-        etat_pause[cle_trouvee] = mettre_en_pause
+        etat[cle_trouvee] = activer
         cibles = NOMS_AFFICHAGE[cle_trouvee]
 
-    sauvegarder_json(f"{RACINE}/etat_pause.json", etat_pause)
-    action = "mises en pause" if mettre_en_pause else "reactivees"
-    return (
-        f"🔕 Notifications {action} pour : {cibles}\n\n"
-        "(Les strategies continuent de parier normalement en arriere-plan "
-        "- seules les notifications Telegram sont affectees.)"
+    sauvegarder_json(chemin_fichier_etat, etat)
+    action = verbe_action if activer else verbe_inaction
+    return f"{emoji} {action} pour : {cibles}\n\n{texte_explicatif}"
+
+
+def traiter_pause(argument, mettre_en_pause):
+    return traiter_pause_generique(
+        argument, mettre_en_pause, f"{RACINE}/etat_pause.json", "🔕",
+        "Notifications mises en pause", "Notifications reactivees",
+        "(NIVEAU 1 - Les strategies continuent de parier normalement en "
+        "arriere-plan - seules les notifications Telegram sont affectees. "
+        "Pour arreter reellement les nouveaux paris, utilise /arreter.)",
+    )
+
+
+def traiter_arret(argument, arreter):
+    return traiter_pause_generique(
+        argument, arreter, f"{RACINE}/etat_arret.json", "🛑",
+        "Nouveaux paris ARRETES", "Nouveaux paris reactives",
+        "(NIVEAU 2 - Plus aucun nouveau pari ne sera journalise ni "
+        "notifie pour cette strategie tant qu'elle n'est pas reactivee "
+        "avec /demarrer. Les paris deja en cours de resolution ne sont "
+        "pas annules - ils se resolvent normalement, seuls les NOUVEAUX "
+        "paris s'arretent.)",
     )
 
 
@@ -1126,6 +1151,16 @@ def main():
                 envoyer_telegram("Precise une strategie ou 'tout'. Ex : /reprendre trio")
             else:
                 envoyer_telegram(traiter_pause(argument, False))
+        elif commande == "/arreter":
+            if not argument:
+                envoyer_telegram("Precise une strategie ou 'tout'. Ex : /arreter multi")
+            else:
+                envoyer_telegram(traiter_arret(argument, True))
+        elif commande == "/demarrer":
+            if not argument:
+                envoyer_telegram("Precise une strategie ou 'tout'. Ex : /demarrer multi")
+            else:
+                envoyer_telegram(traiter_arret(argument, False))
         elif commande == "/courses_restantes":
             envoyer_telegram(traiter_courses_restantes())
         elif commande == "/courses_non_jouees":
