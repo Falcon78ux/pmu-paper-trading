@@ -169,6 +169,14 @@ def main():
     etat_sire_forme = charger_json(f"{RACINE}/etat_sire_forme.json", {})
     etat_deferrage = charger_json(f"{RACINE}/etat_deferrage.json", {})
     etat_pause = charger_json(f"{RACINE}/etat_pause.json", {})
+    # NIVEAU 2 (20 sept) : etat_arret.json arrete REELLEMENT les nouveaux
+    # paris (rien n'est ajoute a lignes_course, donc rien n'est jamais
+    # resolu/debite - contrairement a etat_pause qui ne coupe que la
+    # notification Telegram, comportement volontaire depuis la conception
+    # initiale du systeme de pause). Un modele arrete (etat_arret) est
+    # aussi automatiquement silencieux (voir plus bas), pour ne jamais
+    # notifier un pari qui ne sera pas reellement place.
+    etat_arret = charger_json(f"{RACINE}/etat_arret.json", {})
     table_pedigree = charger_table_pedigree(f"{RACINE}/pedigree_aplati.csv")
 
     modele_v14 = charger_json(f"{RACINE}/modele_v14.json")
@@ -726,144 +734,144 @@ def main():
 
         sections_msg = []
 
-        if value_bets_v14 and not etat_pause.get("v14", False):
+        if value_bets_v14 and not etat_pause.get("v14", False) and not etat_arret.get("v14", False):
             bloc = f"<b>Modele v1.4</b> (bankroll : {bankroll_v14:.0f}EUR) :\n"
             for cheval, cote, proba, ev, mise in value_bets_v14:
                 bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
 
-        if dutch_v14_liste and not etat_pause.get("v14dutch", False):
+        if dutch_v14_liste and not etat_pause.get("v14dutch", False) and not etat_arret.get("v14dutch", False):
             bloc = f"<b>Modele v1.4-DUTCH</b> (bankroll : {bankroll_v14dutch:.0f}EUR, {len(dutch_v14_liste)} opportunite(s)) :\n"
             for d in dutch_v14_liste:
                 bloc += f"- Outsider {d['cheval_outsider']} (cote {d['cote_outsider']:.1f}) - <b>mise {d['mise_outsider']:.0f}EUR</b>\n"
                 bloc += f"  + Favori {d['cheval_favori']} (cote {d['cote_favori']:.1f}) - <b>mise {d['mise_favori']:.0f}EUR</b>\n"
             sections_msg.append(bloc)
 
-        if value_bets_v14favori and not etat_pause.get("v14favori", False):
+        if value_bets_v14favori and not etat_pause.get("v14favori", False) and not etat_arret.get("v14favori", False):
             bloc = f"<b>Modele v1.4-FAVORI</b> (bankroll : {bankroll_v14favori:.0f}EUR) :\n"
             for cheval, cote, proba, ev, mise in value_bets_v14favori:
                 bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
 
-        if value_bets_v14sire and not etat_pause.get("v14sire", False):
+        if value_bets_v14sire and not etat_pause.get("v14sire", False) and not etat_arret.get("v14sire", False):
             bloc = f"<b>Modele v1.4+GENEALOGIE</b> (bankroll : {bankroll_v14sire:.0f}EUR) :\n"
             for cheval, cote, proba, ev, mise in value_bets_v14sire:
                 bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
 
-        if value_bets_v15 and not etat_pause.get("v15", False):
+        if value_bets_v15 and not etat_pause.get("v15", False) and not etat_arret.get("v15", False):
             bloc = f"<b>Modele v1.5</b> (bankroll : {bankroll_v15:.0f}EUR) :\n"
             for cheval, cote, proba, ev, mise in value_bets_v15:
                 bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
 
-        if value_bets_v18 and not etat_pause.get("v18", False):
+        if value_bets_v18 and not etat_pause.get("v18", False) and not etat_arret.get("v18", False):
             bloc = f"<b>Modele v1.8</b> (bankroll : {bankroll_v18:.0f}EUR) :\n"
             for cheval, cote, proba, ev, mise, d4 in value_bets_v18:
                 marque_d4 = " [D4]" if d4 else ""
                 bloc += f"- {cheval}{marque_d4} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
 
-        if value_bets_v110 and not etat_pause.get("v110", False):
+        if value_bets_v110 and not etat_pause.get("v110", False) and not etat_arret.get("v110", False):
             bloc = f"<b>Modele v1.10</b> [CONDITIONNEL] (bankroll : {bankroll_v110:.0f}EUR) :\n"
             for cheval, cote, proba, ev, mise, d4 in value_bets_v110:
                 marque_d4 = " [D4]" if d4 else ""
                 bloc += f"- {cheval}{marque_d4} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
 
-        if value_bets_v14recalibre and not etat_pause.get("v14recalibre", False):
+        if value_bets_v14recalibre and not etat_pause.get("v14recalibre", False) and not etat_arret.get("v14recalibre", False):
             bloc = f"<b>v1.4-Recalibre</b> ({bankroll_v14recalibre:.0f}EUR) : " + ", ".join(f"{c} ({m:.0f}EUR)" for c, _, _, _, m in value_bets_v14recalibre) + "\n"
             sections_msg.append(bloc)
 
-        if value_bets_v15recalibre and not etat_pause.get("v15recalibre", False):
+        if value_bets_v15recalibre and not etat_pause.get("v15recalibre", False) and not etat_arret.get("v15recalibre", False):
             bloc = f"<b>v1.5-Recalibre</b> ({bankroll_v15recalibre:.0f}EUR) : " + ", ".join(f"{c} ({m:.0f}EUR)" for c, _, _, _, m in value_bets_v15recalibre) + "\n"
             sections_msg.append(bloc)
 
-        if value_bets_v18recalibre and not etat_pause.get("v18recalibre", False):
+        if value_bets_v18recalibre and not etat_pause.get("v18recalibre", False) and not etat_arret.get("v18recalibre", False):
             bloc = f"<b>v1.8-Recalibre</b> ({bankroll_v18recalibre:.0f}EUR) : " + ", ".join(f"{c} ({m:.0f}EUR)" for c, _, _, _, m, _ in value_bets_v18recalibre) + "\n"
             sections_msg.append(bloc)
 
-        if value_bets_v110recalibre and not etat_pause.get("v110recalibre", False):
+        if value_bets_v110recalibre and not etat_pause.get("v110recalibre", False) and not etat_arret.get("v110recalibre", False):
             bloc = f"<b>v1.10-Recalibre</b> ({bankroll_v110recalibre:.0f}EUR) : " + ", ".join(f"{c} ({m:.0f}EUR)" for c, _, _, _, m, _ in value_bets_v110recalibre) + "\n"
             sections_msg.append(bloc)
 
-        if dutch_v110_liste and not etat_pause.get("v110dutch", False):
+        if dutch_v110_liste and not etat_pause.get("v110dutch", False) and not etat_arret.get("v110dutch", False):
             bloc = f"<b>Modele v1.10-DUTCH</b> (bankroll : {bankroll_v110dutch:.0f}EUR, {len(dutch_v110_liste)} opportunite(s)) :\n"
             for d in dutch_v110_liste:
                 bloc += f"- Outsider {d['cheval_outsider']} (cote {d['cote_outsider']:.1f}) - <b>mise {d['mise_outsider']:.0f}EUR</b>\n"
                 bloc += f"  + Favori {d['cheval_favori']} (cote {d['cote_favori']:.1f}) - <b>mise {d['mise_favori']:.0f}EUR</b>\n"
             sections_msg.append(bloc)
 
-        if value_bets_v110favori and not etat_pause.get("v110favori", False):
+        if value_bets_v110favori and not etat_pause.get("v110favori", False) and not etat_arret.get("v110favori", False):
             bloc = f"<b>Modele v1.10-FAVORI</b> (bankroll : {bankroll_v110favori:.0f}EUR) :\n"
             for cheval, cote, proba, ev, mise, d4 in value_bets_v110favori:
                 bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
 
-        if value_bets_v110d4 and not etat_pause.get("v110d4", False):
+        if value_bets_v110d4 and not etat_pause.get("v110d4", False) and not etat_arret.get("v110d4", False):
             bloc = f"<b>Modele v1.10-D4</b> (bankroll : {bankroll_v110d4:.0f}EUR, changement vers deferre 4 pieds) :\n"
             for cheval, cote, proba, ev, mise in value_bets_v110d4:
                 bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
 
-        if value_bets_v110sniper and not etat_pause.get("v110sniper", False):
+        if value_bets_v110sniper and not etat_pause.get("v110sniper", False) and not etat_arret.get("v110sniper", False):
             bloc = f"<b>Modele v1.10-SNIPER</b> (bankroll : {bankroll_v110sniper:.0f}EUR, proba\u2265{SEUIL_PROBA_SNIPER:.0%}) :\n"
             for cheval, cote, proba, ev, mise in value_bets_v110sniper:
                 bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
 
-        if value_bets_v110place and not etat_pause.get("v110place", False):
+        if value_bets_v110place and not etat_pause.get("v110place", False) and not etat_arret.get("v110place", False):
             bloc = f"<b>v1.10-PLACE</b> ({bankroll_v110place:.0f}EUR) : " + ", ".join(f"{c} ({m:.0f}EUR)" for c, _, _, _, m, _ in value_bets_v110place) + "\n"
             sections_msg.append(bloc)
 
-        if value_bets_v110antifav and not etat_pause.get("v110antifav", False):
+        if value_bets_v110antifav and not etat_pause.get("v110antifav", False) and not etat_arret.get("v110antifav", False):
             bloc = f"<b>v1.10-AntiFav</b> ({bankroll_v110antifav:.0f}EUR) : " + ", ".join(f"{c} ({m:.0f}EUR)" for c, _, _, _, m in value_bets_v110antifav) + "\n"
             sections_msg.append(bloc)
 
-        if value_bets_v110snipercombine and not etat_pause.get("v110snipercombine", False):
+        if value_bets_v110snipercombine and not etat_pause.get("v110snipercombine", False) and not etat_arret.get("v110snipercombine", False):
             bloc = f"<b>v1.10-SniperCombine</b> ({bankroll_v110snipercombine:.0f}EUR) : " + ", ".join(f"{c} ({m:.0f}EUR)" for c, _, _, _, m in value_bets_v110snipercombine) + "\n"
             sections_msg.append(bloc)
 
-        if value_bets_v110ecartfaible and not etat_pause.get("v110ecartfaible", False):
+        if value_bets_v110ecartfaible and not etat_pause.get("v110ecartfaible", False) and not etat_arret.get("v110ecartfaible", False):
             bloc = f"<b>v1.10-EcartFaible</b> ({bankroll_v110ecartfaible:.0f}EUR) : " + ", ".join(f"{c} ({m:.0f}EUR)" for c, _, _, _, m in value_bets_v110ecartfaible) + "\n"
             sections_msg.append(bloc)
 
-        if consensus_place_pick and not etat_pause.get("consensus_place", False):
+        if consensus_place_pick and not etat_pause.get("consensus_place", False) and not etat_arret.get("consensus_place", False):
             cheval, cote, proba, ev, mise = consensus_place_pick
             bloc = f"<b>Modele CONSENSUS-PLACE</b> (bankroll : {bankroll_consensus_place:.0f}EUR) :\n"
             bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
 
-        if couple_harville_pick and not etat_pause.get("couple_harville", False):
+        if couple_harville_pick and not etat_pause.get("couple_harville", False) and not etat_arret.get("couple_harville", False):
             bloc = f"<b>Modele COUPLE-HARVILLE</b> (bankroll : {bankroll_couple_harville:.0f}EUR) :\n"
             bloc += f"- {couple_harville_pick['cheval_1']} + {couple_harville_pick['cheval_2']} - <b>mise {couple_harville_pick['mise']:.0f}EUR</b>\n"
             sections_msg.append(bloc)
 
-        if value_bets_place and not etat_pause.get("place", False):
+        if value_bets_place and not etat_pause.get("place", False) and not etat_arret.get("place", False):
             bloc = f"<b>Modele PLACE</b> (bankroll : {bankroll_place:.0f}EUR, top pick, mise fixe) :\n"
             for cheval, proba, mise in value_bets_place:
                 bloc += f"- {cheval} - proba place {proba:.1%}, <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
 
-        if value_bets_deux_sur_quatre and not etat_pause.get("2sur4", False):
+        if value_bets_deux_sur_quatre and not etat_pause.get("2sur4", False) and not etat_arret.get("2sur4", False):
             bloc = f"<b>Modele 2 SUR 4</b> (bankroll : {bankroll_2sur4:.0f}EUR, top 2, mise fixe) :\n"
             for chevaux, mise in value_bets_deux_sur_quatre:
                 bloc += f"- {' + '.join(chevaux)} - <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
 
-        if value_bets_trio and not etat_pause.get("trio", False):
+        if value_bets_trio and not etat_pause.get("trio", False) and not etat_arret.get("trio", False):
             bloc = f"<b>Modele TRIO</b> (bankroll : {bankroll_trio:.0f}EUR, top 3, mise fixe) :\n"
             for chevaux, mise in value_bets_trio:
                 bloc += f"- {' + '.join(chevaux)} - <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
 
-        if value_bets_multi and not etat_pause.get("multi", False):
+        if value_bets_multi and not etat_pause.get("multi", False) and not etat_arret.get("multi", False):
             bloc = f"<b>Modele {type_multi}</b> (bankroll : {bankroll_multi:.0f}EUR, top 4, mise fixe) :\n"
             for chevaux, mise, type_pari in value_bets_multi:
                 bloc += f"- {' + '.join(chevaux)} - <b>mise {mise:.0f}EUR</b>\n"
             sections_msg.append(bloc)
 
-        if value_bets_2favori and not etat_pause.get("2favori", False):
+        if value_bets_2favori and not etat_pause.get("2favori", False) and not etat_arret.get("2favori", False):
             bloc = f"<b>Modele 2E FAVORI</b> (bankroll : {bankroll_2favori:.0f}EUR) :\n"
             for cheval, cote, proba, ev, mise in value_bets_2favori:
                 bloc += f"- {cheval} - cote {cote:.1f}, proba {proba:.1%}, EV {ev:+.1%}, <b>mise {mise:.0f}EUR</b>\n"
@@ -939,6 +947,16 @@ def main():
             lignes_course.append({"race_id": race_id, "modele": "multi", "cheval": "|".join(chevaux), "cote": type_pari, "cote_cloture": "", "ev": "", "mise": mise, "date_detection": maintenant.isoformat()})
         for cheval, cote, proba, ev, mise in value_bets_2favori:
             lignes_course.append({"race_id": race_id, "modele": "2favori", "cheval": cheval, "cote": cote, "cote_cloture": "", "ev": ev, "mise": mise, "date_detection": maintenant.isoformat()})
+
+        # ---------------------------------------------------------------
+        # NIVEAU 2 (20 sept) : retire completement les lignes des modeles
+        # arretes AVANT le calcul d'exposition - un modele arrete ne doit
+        # ni etre logge, ni consommer de budget d'exposition partage sur
+        # un cheval, ni etre resolu plus tard par verifier_resultats.py
+        # (qui ne resout que ce qui existe dans paris_virtuels.csv).
+        # ---------------------------------------------------------------
+        if etat_arret:
+            lignes_course = [l for l in lignes_course if not etat_arret.get(l["modele"], False)]
 
         # ---------------------------------------------------------------
         # LIMITE D'EXPOSITION DYNAMIQUE PAR CHEVAL - s'applique
