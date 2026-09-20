@@ -103,10 +103,16 @@ REFERENCE_BACKTEST = {
     "v110recalibre": {"n": 463, "roi": -0.0395},
     "consensus_place": {"n": 7811, "roi": 0.3738},
     "couple_harville": {"n": 16159, "roi": 0.7088},  # CORRIGE (26 aout) : ancienne valeur (0.6757) sous-estimait - ne verifiait qu'UNE combinaison gagnante, ratant les cas d'egalite/dead-heat (~25% des courses ont plusieurs combinaisons gagnantes simultanees)
-    "place": {"n": 16635, "roi": 0.2339},  # CORRIGE (25 aout) : reconfirme avec vrais rapports (place_historique.csv), quasi identique a l'ancienne valeur
-    "2sur4": {"n": 10312, "roi": 0.838},
-    "trio": {"n": 14993, "roi": 1.6530},  # CORRIGE (26 aout) : ancienne valeur (1.3745) sous-estimait trio - ne comptait pas les gains legitimes sur les Trio "degrades" (rapport a 2 chevaux au lieu de 3, ~13.7% des courses selon un echantillon de 300)
-    "multi": {"n": 6366, "roi": 1.9111},  # CORRIGE (25 aout) : ancienne valeur (n=10206, roi=4.60) provenait d'une estimation theorique, jamais confirmee par de vrais rapports. Recalculee a partir de la collecte complete de multi_historique.csv (vrais rapports MULTI/MINI_MULTI, 28030 courses interrogees).
+    # CORRIGE (20 sept, nuit) : les 25 aout/26 aout ci-dessus etaient deja
+    # une correction, mais restaient un backtest jamais confronte aux
+    # vrais rapports de facon systematique. TROT_verification_combines_
+    # vrais_rapports.py (20 sept) a recalcule les 4 avec les vrais
+    # rapports PMU (13462 courses) : multi s'est revele ENTIEREMENT
+    # FICTIF (backtest recalcule = -39.67%, rejoint le direct a -35.0%) ;
+    # 2sur4 et trio partiellement gonfles (biais des courses "absentes") ;
+    # place quasi inchange. Voir checkpoint pour le detail complet.
+    "place": {"n": 13462, "roi": 0.2312}, "2sur4": {"n": 10796, "roi": 0.4524},
+    "trio": {"n": 12071, "roi": 1.4406}, "multi": {"n": 6784, "roi": -0.3967},
     "2favori": {"n": 3171, "roi": 0.3514},  # CORRIGE (25 aout) : reconstruction complete du modele (jamais retestee depuis le deploiement initial) donne un resultat different de l'ancienne reference (n=2645, roi=0.2501)
 }
 
