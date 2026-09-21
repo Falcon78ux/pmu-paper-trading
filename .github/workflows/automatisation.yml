@@ -5,6 +5,10 @@ on:
     - cron: "7,22,37,52 6-23 * * *"
   workflow_dispatch: {}
 
+concurrency:
+  group: pmu-trot-cron
+  cancel-in-progress: false
+
 jobs:
   verifier:
     runs-on: ubuntu-latest
