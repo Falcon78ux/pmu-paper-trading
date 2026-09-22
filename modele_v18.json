@@ -1,0 +1,37 @@
+{
+  "standardisation": {
+    "speed_figure_avant_course": {
+      "moyenne": -126.0019201990737,
+      "ecart_type": 800.2928362200734
+    },
+    "driver_forme": {
+      "moyenne": 0.08663437783002387,
+      "ecart_type": 0.06378969702859544
+    },
+    "biais_hippodrome": {
+      "moyenne": 0.0033845858798562858,
+      "ecart_type": 0.005226529290478754
+    },
+    "nb_partants_course": {
+      "moyenne": 12.841319059200423,
+      "ecart_type": 8.596312929350963
+    },
+    "ecart_corde": {
+      "moyenne": 17.9853511343625,
+      "ecart_type": 407.79790386044385
+    }
+  },
+  "coefficients": {
+    "const": 0.7668747244749511,
+    "sf_std": 0.03397108439928707,
+    "log_cote": -1.2761137605651525,
+    "driver_std": 0.0845529550644055,
+    "hippo_std": 0.07560916593694632,
+    "interaction_sf_driver": 0.0,
+    "nb_partants_std": -0.04263013130716074,
+    "ecart_corde_std": 0.025129225246978592,
+    "deferre_4_pieds": 0.052479437101376133
+  },
+  "date_export": "2026-09-21",
+  "note": "Reentraine le 21 sept - meme methode que v1.4, historique complet entries_v2.csv. interaction_sf_driver mise a 0 (non re-estimee dans ce reentrainement rapide, coefficient historiquement faible/instable)."
+}
