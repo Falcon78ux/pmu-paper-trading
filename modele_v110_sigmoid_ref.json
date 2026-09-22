@@ -1,0 +1,66 @@
+{
+  "variables_brutes": [
+    "speed_figure_avant_course",
+    "log_cote",
+    "driver_forme",
+    "biais_hippodrome",
+    "nb_partants_course",
+    "ecart_corde",
+    "deferre_4_pieds",
+    "age",
+    "indicateur_femelle",
+    "taux_victoire_carriere",
+    "entropie"
+  ],
+  "normalisation": {
+    "speed_figure_avant_course": {
+      "moyenne": -131.45442738730614,
+      "ecart_type": 799.5961696177884
+    },
+    "driver_forme": {
+      "moyenne": 0.0851375996600077,
+      "ecart_type": 0.06155028971358708
+    },
+    "biais_hippodrome": {
+      "moyenne": 0.0038874803779048402,
+      "ecart_type": 0.00461719489957263
+    },
+    "nb_partants_course": {
+      "moyenne": 11.82974167424712,
+      "ecart_type": 6.671317154550124
+    },
+    "ecart_corde": {
+      "moyenne": 17.52607407645927,
+      "ecart_type": 409.8786458708084
+    },
+    "age": {
+      "moyenne": 5.515347399434887,
+      "ecart_type": 1.8578131956506612
+    },
+    "taux_victoire_carriere": {
+      "moyenne": 0.11710205543292507,
+      "ecart_type": 0.11727117684225549
+    },
+    "entropie": {
+      "moyenne": 1.6705600459104737,
+      "ecart_type": 0.43857537317644657
+    }
+  },
+  "coefficients": {
+    "const": 0.7025026121244029,
+    "sf_std": 0.04195833560782086,
+    "log_cote": -1.249206533509788,
+    "driver_std": 0.07702730242962591,
+    "hippo_std": 0.06259649072541142,
+    "interaction_sf_driver": 0.0,
+    "nb_partants_std": 0.025902960167394903,
+    "ecart_corde_std": 0.01882732024467499,
+    "deferre_4_pieds": 0.11888902817823345,
+    "age_std": -0.089156525204174,
+    "indicateur_femelle": -0.05688479423082811,
+    "taux_victoire_std": 0.015634576430427517,
+    "entropie_std": -0.0859585092804404
+  },
+  "date_export": "2026-09-22",
+  "note": "Reentraine le 21 sept pour coherence - REFERENCE UNIQUEMENT, aucune mise reelle. interaction_sf_driver mise a 0 (non re-estimee)."
+}

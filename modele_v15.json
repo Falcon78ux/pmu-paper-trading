@@ -1,0 +1,35 @@
+{
+  "variables_brutes": [
+    "speed_figure_avant_course",
+    "log_cote",
+    "driver_forme",
+    "biais_hippodrome"
+  ],
+  "normalisation": {
+    "speed_figure_avant_course": {
+      "moyenne": -126.0019201990737,
+      "ecart_type": 800.2928362200734
+    },
+    "log_cote": {
+      "moyenne": 2.895434780898382,
+      "ecart_type": 1.1678158585218705
+    },
+    "driver_forme": {
+      "moyenne": 0.08663437783002387,
+      "ecart_type": 0.06378969702859544
+    },
+    "biais_hippodrome": {
+      "moyenne": 0.0033845858798562858,
+      "ecart_type": 0.005226529290478754
+    }
+  },
+  "coefficients": {
+    "const": -2.9054312091143877,
+    "speed_figure_avant_course_std": 0.022244995966120187,
+    "log_cote_std": -1.4969173091664296,
+    "driver_forme_std": 0.0824889387227243,
+    "biais_hippodrome_std": 0.07375269716302385
+  },
+  "date_export": "2026-09-21",
+  "note": "Reentraine le 21 sept - meme methode que v1.4, historique complet entries_v2.csv."
+}

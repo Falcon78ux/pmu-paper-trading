@@ -1,0 +1,36 @@
+{
+  "variables_brutes": [
+    "speed_figure_avant_course",
+    "log_cote",
+    "driver_forme",
+    "biais_hippodrome"
+  ],
+  "normalisation": {
+    "speed_figure_avant_course": {
+      "moyenne": -57.29185486299308,
+      "ecart_type": 842.4569834918506
+    },
+    "log_cote": {
+      "moyenne": 1.950705710443218,
+      "ecart_type": 0.6161111940687156
+    },
+    "driver_forme": {
+      "moyenne": 0.09907914036100142,
+      "ecart_type": 0.06519079083617749
+    },
+    "biais_hippodrome": {
+      "moyenne": 0.0035457931884836677,
+      "ecart_type": 0.0060616339570366195
+    }
+  },
+  "coefficients": {
+    "const": -1.5670362890126728,
+    "speed_figure_avant_course_std": 0.010621603781063004,
+    "log_cote_std": -0.5524962283662701,
+    "driver_forme_std": 0.0697822778699426,
+    "biais_hippodrome_std": 0.1161931814351195
+  },
+  "date_export": "2026-09-21",
+  "n_entrainement": 6642,
+  "note": "Reentraine le 21 sept - meme methode que v1.4/v1.5, historique complet entries_v2.csv, sous-population 2e favori (favori non place a sa derniere sortie)."
+}
