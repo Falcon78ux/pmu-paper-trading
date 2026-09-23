@@ -1,0 +1,57 @@
+{
+  "variables_brutes": [
+    "speed_figure_avant_course",
+    "log_cote",
+    "driver_forme"
+  ],
+  "normalisation": {
+    "speed_figure_avant_course": {
+      "moyenne": -126.09271967811398,
+      "ecart_type": 800.7490122936277
+    },
+    "driver_forme": {
+      "moyenne": 0.08648835903230812,
+      "ecart_type": 0.06380062229308862
+    }
+  },
+  "coefficients": {
+    "const": 0.8086818439274978,
+    "speed_figure_avant_course_std": 0.02078639141699818,
+    "log_cote": -1.2822705704824435,
+    "driver_forme_std": 0.07382707369776144
+  },
+  "cov_params": [
+    [
+      0.0007431678350851323,
+      -8.604545984721237e-05,
+      -0.00031352967587868223,
+      -0.00010101419103402037
+    ],
+    [
+      -8.604545984721237e-05,
+      0.0001257606575754843,
+      2.9888065523889983e-05,
+      -4.19307248309641e-06
+    ],
+    [
+      -0.0003135296758786823,
+      2.988806552388999e-05,
+      0.00015491826228449806,
+      3.639747114183665e-05
+    ],
+    [
+      -0.00010101419103402027,
+      -4.193072483096418e-06,
+      3.63974711418366e-05,
+      7.994883806133581e-05
+    ]
+  ],
+  "cov_params_ordre": [
+    "const",
+    "speed_figure_avant_course_std",
+    "log_cote",
+    "driver_forme_std"
+  ],
+  "date_export": "2026-09-23",
+  "note": "Reexporte le 23 sept - memes coefficients qu'hier soir (21 sept), ajoute cov_params pour le filtre d'incertitude delta-method."
+}

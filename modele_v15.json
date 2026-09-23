@@ -1,0 +1,79 @@
+{
+  "variables_brutes": [
+    "speed_figure_avant_course",
+    "log_cote",
+    "driver_forme",
+    "biais_hippodrome"
+  ],
+  "normalisation": {
+    "speed_figure_avant_course": {
+      "moyenne": -126.0019201990737,
+      "ecart_type": 800.2928362200734
+    },
+    "log_cote": {
+      "moyenne": 2.895434780898382,
+      "ecart_type": 1.1678158585218705
+    },
+    "driver_forme": {
+      "moyenne": 0.08663437783002387,
+      "ecart_type": 0.06378969702859544
+    },
+    "biais_hippodrome": {
+      "moyenne": 0.0033845858798562858,
+      "ecart_type": 0.005226529290478754
+    }
+  },
+  "coefficients": {
+    "const": -2.9054312091143877,
+    "speed_figure_avant_course_std": 0.022244995966120187,
+    "log_cote_std": -1.4969173091664296,
+    "driver_forme_std": 0.0824889387227243,
+    "biais_hippodrome_std": 0.07375269716302385
+  },
+  "cov_params": [
+    [
+      0.0002321465872543516,
+      5.329830022378725e-08,
+      0.0001611132766718445,
+      2.9690854647362354e-06,
+      -9.334315735396626e-06
+    ],
+    [
+      5.329830022380715e-08,
+      0.00012832461232451325,
+      3.5377312125486525e-05,
+      -3.5749828602861148e-06,
+      4.395511781315069e-06
+    ],
+    [
+      0.00016111327667184456,
+      3.5377312125486505e-05,
+      0.00021551874134915835,
+      4.312435195641751e-05,
+      -2.0764419837520044e-06
+    ],
+    [
+      2.9690854647362346e-06,
+      -3.57498286028612e-06,
+      4.312435195641751e-05,
+      8.374221061242535e-05,
+      1.3448948614380858e-05
+    ],
+    [
+      -9.33431573539662e-06,
+      4.395511781315072e-06,
+      -2.0764419837519968e-06,
+      1.3448948614380861e-05,
+      9.887131868208293e-05
+    ]
+  ],
+  "cov_params_ordre": [
+    "const",
+    "speed_figure_avant_course_std",
+    "log_cote_std",
+    "driver_forme_std",
+    "biais_hippodrome_std"
+  ],
+  "date_export": "2026-09-23",
+  "note": "Reexporte le 23 sept - memes coefficients qu'hier soir (21 sept), ajoute cov_params pour le filtre d'incertitude delta-method."
+}
