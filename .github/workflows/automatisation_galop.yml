@@ -5,6 +5,10 @@ on:
     - cron: "12,27,42,57 6-23 * * *"
   workflow_dispatch: {}
 
+concurrency:
+  group: pmu-galop-cron
+  cancel-in-progress: false
+
 jobs:
   verifier_galop:
     runs-on: ubuntu-latest
