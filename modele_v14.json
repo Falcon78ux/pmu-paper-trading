@@ -1,0 +1,61 @@
+{
+  "variables_brutes": [
+    "speed_figure_avant_course",
+    "log_cote",
+    "driver_forme"
+  ],
+  "normalisation": {
+    "speed_figure_avant_course": {
+      "moyenne": -125.23404059063589,
+      "ecart_type": 801.5281581164282
+    },
+    "log_cote": {
+      "moyenne": 2.8908106700239125,
+      "ecart_type": 1.1651597035702819
+    },
+    "driver_forme": {
+      "moyenne": 0.08635066828234193,
+      "ecart_type": 0.06356339245449114
+    }
+  },
+  "coefficients": {
+    "const": -2.8908428274069577,
+    "speed_figure_avant_course_std": 0.028938672127256926,
+    "log_cote_std": -1.4897848068206831,
+    "driver_forme_std": 0.0683983083304122
+  },
+  "cov_params": [
+    [
+      0.00023246216342038135,
+      -4.283074509034655e-07,
+      0.00016178324003782732,
+      4.907279839711126e-06
+    ],
+    [
+      -4.283074509034648e-07,
+      0.00013127320222658428,
+      3.59067778154035e-05,
+      -4.348982824842743e-06
+    ],
+    [
+      0.00016178324003782735,
+      3.5906777815403514e-05,
+      0.00021805953177769796,
+      4.432622364262797e-05
+    ],
+    [
+      4.9072798397111306e-06,
+      -4.348982824842739e-06,
+      4.432622364262797e-05,
+      8.302045783434318e-05
+    ]
+  ],
+  "cov_params_ordre": [
+    "const",
+    "speed_figure_avant_course_std",
+    "log_cote_std",
+    "driver_forme_std"
+  ],
+  "date_export": "2026-09-24",
+  "note": "CORRECTIF URGENT (24 sept) - le fichier pousse le 23 sept avait log_cote NON standardise par erreur de script (colonnes_non_std incluait log_cote a tort, copie de la convention v1.8) - KeyError 'log_cote' en production a chaque course. log_cote_std correctement present ici, coefficient reajuste sur l'echelle standardisee (valeur differente du fichier casse)."
+}
