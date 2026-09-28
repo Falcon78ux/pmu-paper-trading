@@ -50,7 +50,7 @@ jobs:
           git branch -vv
           git remote -v
           echo "=== GIT ADD ==="
-          git add etat_drivers_galop.json etat_pause_galop.json courses_notifiees_galop.json paris_virtuels_galop.csv bankroll_galopev.json bankroll_galopplace.json || echo "ADD_ECHEC: $?"
+          git add etat_drivers_galop.json etat_courses_jockey_maj_galop.json etat_pause_galop.json courses_notifiees_galop.json paris_virtuels_galop.csv bankroll_galopev.json bankroll_galopplace.json || echo "ADD_ECHEC: $?"
           echo "=== GIT DIFF/COMMIT ==="
           if git diff --quiet --cached; then
             echo "Rien a committer."
